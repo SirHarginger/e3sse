@@ -25,8 +25,23 @@ cd /srv/ben/e3sse
 git status
 git pull --ff-only
 git rev-parse HEAD
-PYTHONPATH=src python scripts/check_g0.py --config configs/server.json --resume
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+PYTHONPATH=src python scripts/check_g0.py --config configs/server.json --workers 8 --resume
 ```
+
+`--workers` (default: `audit.workers` in the JSON config; `1` = serial) sets a
+bounded process pool. The work units are each non-MPLiTrj dataset, each MPLiTrj
+source file (streamed; one file per worker), and then the MPLiTrj provenance
+sample. Only the parent writes checkpoints (`datasets/`, `checkpoints/MPLiTrj/`,
+`linkage/`) and the canonical `audit.json`, each atomically. The worker count is
+operational: it does not change the run ID, the checkpoints, or any scientific
+output, so serial and parallel runs are interchangeable under `--resume`. If a
+unit crashes, completed checkpoints are kept, `failures.json` is written, any
+earlier `audit.json` for the run is moved to `audit.previous.json`, and the
+command exits non-zero. The server has 80 cores
+but about 12 GiB of free RAM: start at 8 workers, and try 12 only if memory stays
+stable. MPLiTrj runtime is bounded by its largest file
+(`execution.longest_unit` in the report).
 
 The command reads `/srv/ben/e3sse/data/raw` and, read-only,
 `/srv/ben/e3sse/data/downloads/MPLiTrj_raw.zip`, and writes only below the

@@ -61,6 +61,25 @@ class BoundedExamples:
             "provenance": provenance,
         }
 
+    # State round-trips let independent work units be merged in canonical order.
+    # Absorbing units in that order reproduces a serial pass exactly: counts add,
+    # and the first ``limit`` examples of the concatenation are kept.
+    def to_state(self) -> dict[str, Any]:
+        return {"count": self.count, "limit": self.limit, "examples": list(self.examples)}
+
+    @classmethod
+    def from_state(cls, state: dict[str, Any]) -> BoundedExamples:
+        examples = cls(state["limit"])
+        examples.count = state["count"]
+        examples.examples = list(state["examples"])
+        return examples
+
+    def absorb(self, other: BoundedExamples) -> None:
+        self.count += other.count
+        room = self.limit - len(self.examples)
+        if room > 0:
+            self.examples.extend(other.examples[:room])
+
 
 def parse_edge_id(edge_id: str) -> str | None:
     """Return the material ID encoded in a LiTraj edge ID, or None if it does not parse."""
@@ -268,6 +287,26 @@ class FrameGeometry:
     positions: np.ndarray
     cell: np.ndarray
     energy: float | None
+
+    def to_state(self) -> list[Any]:
+        """JSON form; Python float repr round-trips float64 exactly."""
+
+        return [
+            self.numbers.tolist(),
+            self.positions.tolist(),
+            self.cell.tolist(),
+            self.energy,
+        ]
+
+    @classmethod
+    def from_state(cls, state: list[Any]) -> FrameGeometry:
+        numbers, positions, cell, energy = state
+        return cls(
+            numbers=np.asarray(numbers, dtype=np.int64).reshape(-1),
+            positions=np.asarray(positions, dtype=float).reshape(-1, 3),
+            cell=np.asarray(cell, dtype=float).reshape(3, 3),
+            energy=energy,
+        )
 
     @classmethod
     def from_atoms(cls, atoms: Atoms) -> FrameGeometry:

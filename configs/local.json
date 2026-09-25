@@ -18,6 +18,7 @@
     "mplitrj_raw_archive": "downloads/MPLiTrj_raw.zip",
     "provenance_sample_materials": 2,
     "provenance_inspect_hops": 3,
-    "optimade_line_limit": 200
+    "optimade_line_limit": 200,
+    "workers": 1
   }
 }

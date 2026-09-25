@@ -17,15 +17,21 @@ import hashlib
 import importlib.util
 import json
 import math
+import multiprocessing
 import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -87,7 +93,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "optimade_line_limit": 200,
     "provenance_max_members_per_material": 2000,
     "provenance_max_frames_per_material": 500,
+    # Operational only: never part of run IDs, fingerprints or scientific output.
+    "workers": 1,
 }
+OPERATIONAL_SETTINGS = ("workers",)
 
 # requirement, rationale, and (optionally) the capability that reports its blocker.
 ROLES: dict[str, dict[str, Any]] = {
@@ -409,6 +418,53 @@ class IdentifierTracker:
         return result
 
 
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "dimension": self.dimension,
+            "requirement": self.requirement,
+            "note": self.note,
+            "limit": self.limit,
+            "total": self.total,
+            "with_value": self.with_value,
+            "missing": self.missing.to_state(),
+            "conflicts": self.conflicts.to_state(),
+            "sources": dict(sorted(self.sources.items())),
+            "kinds": sorted(self.kinds),
+            "values": None if self.values is None else dict(sorted(self.values.items())),
+        }
+
+    @classmethod
+    def from_state(cls, state: dict[str, Any]) -> IdentifierTracker:
+        tracker = cls(
+            state["dimension"],
+            state["requirement"],
+            state["note"],
+            state["limit"],
+            keep_values=state["values"] is not None,
+        )
+        tracker.total = state["total"]
+        tracker.with_value = state["with_value"]
+        tracker.missing = BoundedExamples.from_state(state["missing"])
+        tracker.conflicts = BoundedExamples.from_state(state["conflicts"])
+        tracker.sources = Counter(state["sources"])
+        tracker.kinds = set(state["kinds"])
+        if state["values"] is not None:
+            tracker.values = Counter(state["values"])
+        return tracker
+
+    def absorb(self, other: IdentifierTracker) -> None:
+        """Merge a later work unit's observations, as if seen after this one's."""
+
+        self.total += other.total
+        self.with_value += other.with_value
+        self.missing.absorb(other.missing)
+        self.conflicts.absorb(other.conflicts)
+        self.sources.update(other.sources)
+        self.kinds |= other.kinds
+        if self.values is not None and other.values is not None:
+            self.values.update(other.values)
+
+
 def _trackers(dataset: str, example_limit: int, keep: Iterable[str]) -> dict[str, IdentifierTracker]:
     keep_set = set(keep)
     trackers = {}
@@ -508,6 +564,58 @@ class FrameSchema:
                 for quantity in QUANTITY_FIELDS
             },
         }
+
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "limit": self.limit,
+            "files": self.files,
+            "frames": self.frames,
+            "frames_per_file": {str(k): v for k, v in sorted(self.frames_per_file.items())},
+            "info_keys": sorted(self.info_keys),
+            "array_keys": sorted(self.array_keys),
+            "result_keys": sorted(self.result_keys),
+            "calculators": dict(sorted(self.calculators.items())),
+            "species": sorted(self.species),
+            "units": {k: sorted(v) for k, v in sorted(self.units.items())},
+            "locations": {q: dict(sorted(c.items())) for q, c in self.locations.items()},
+            "missing": {q: examples.to_state() for q, examples in self.missing.items()},
+        }
+
+    @classmethod
+    def from_state(cls, state: dict[str, Any]) -> FrameSchema:
+        schema = cls(state["limit"])
+        schema.files = state["files"]
+        schema.frames = state["frames"]
+        schema.frames_per_file = Counter({int(k): v for k, v in state["frames_per_file"].items()})
+        schema.info_keys = set(state["info_keys"])
+        schema.array_keys = set(state["array_keys"])
+        schema.result_keys = set(state["result_keys"])
+        schema.calculators = Counter(state["calculators"])
+        schema.species = set(state["species"])
+        schema.units = defaultdict(set, {k: set(v) for k, v in state["units"].items()})
+        schema.locations = {q: Counter(state["locations"][q]) for q in QUANTITY_FIELDS}
+        schema.missing = {
+            q: BoundedExamples.from_state(state["missing"][q]) for q in QUANTITY_FIELDS
+        }
+        return schema
+
+    def absorb(self, other: FrameSchema) -> None:
+        """Merge a later work unit's frames, as if parsed after this one's."""
+
+        self.files += other.files
+        self.frames += other.frames
+        self.frames_per_file.update(other.frames_per_file)
+        self.info_keys |= other.info_keys
+        self.array_keys |= other.array_keys
+        self.result_keys |= other.result_keys
+        self.calculators.update(other.calculators)
+        self.species |= other.species
+        for key, values in other.units.items():
+            self.units[key] |= values
+        for quantity in QUANTITY_FIELDS:
+            self.locations[quantity].update(other.locations[quantity])
+            self.missing[quantity].absorb(other.missing[quantity])
 
 
 def _metadata_keywords(text: str) -> list[str]:
@@ -869,114 +977,226 @@ def _investigate_raw_archive(
     return record, index, sample
 
 
-def _audit_mplitrj(
+# MPLiTrj is audited as independent work units so that its source files can be
+# parsed concurrently: a cheap parent-side preparation (auxiliary files, raw
+# archive central directory, sample material choice), one streaming unit per
+# immutable source file, and one provenance-sample unit that needs every file
+# unit's capped sample.  Each unit returns compact JSON state whose size does not
+# grow with the number of frames, and the parent merges states in canonical
+# file order, which reproduces a single serial pass exactly.
+
+
+def _mplitrj_prepare(
     files: list[Path], settings: dict[str, Any], raw_archive: Path | None
 ) -> dict[str, Any]:
     limit = settings["example_limit"]
+    schemas: list[dict[str, Any]] = []
     errors: list[str] = []
-    warnings: list[str] = []
-    schemas = []
     for path in (p for p in files if p.suffix.lower() not in XYZ_SUFFIXES):
         try:
             schemas.append(_describe_file(path, limit))
         except Exception as exc:
             errors.append(f"{path}: {type(exc).__name__}: {exc}")
-    trackers = _trackers("MPLiTrj", limit, LINKAGE_DIMENSIONS + ("published_split",))
     archive_record, index, sample_materials = _investigate_raw_archive(raw_archive, settings)
-    if archive_record.get("error"):
-        warnings.append(f"Raw archive could not be indexed: {archive_record['error']}")
-    sample_set = set(sample_materials)
-    flattened_sample: list[tuple[str, str, FrameGeometry]] = []
-    sampled_per_material: Counter[str] = Counter()
-    frames_beyond_cap = 0
+    return {
+        "aux_schemas": schemas,
+        "aux_errors": errors,
+        "archive_record": archive_record,
+        "archive_indexed": index is not None,
+        "archive_hops": [] if index is None else list(index.hops),
+        "sample_materials": sample_materials,
+    }
 
+
+def mplitrj_source_files(files: list[Path]) -> list[Path]:
+    """MPLiTrj extxyz sources in canonical (sorted path) order."""
+
+    return sorted(
+        (p for p in files if p.suffix.lower() in XYZ_SUFFIXES), key=lambda p: p.as_posix()
+    )
+
+
+def _mplitrj_file_unit(
+    path: str, settings: dict[str, Any], sample_materials: list[str]
+) -> dict[str, Any]:
+    """Stream one MPLiTrj source file into compact, mergeable JSON state."""
+
+    source = Path(path)
+    limit = settings["example_limit"]
+    cap = settings["provenance_max_frames_per_material"]
+    trackers = _trackers("MPLiTrj", limit, LINKAGE_DIMENSIONS + ("published_split",))
     frame_schema = FrameSchema(limit)
-    per_file: list[dict[str, Any]] = []
     split_counts: Counter[str] = Counter()
     material_splits: dict[str, set[str]] = defaultdict(set)
-    for path in (p for p in files if p.suffix.lower() in XYZ_SUFFIXES):
-        filename_split = split_from_filename(path.name)
-        count = 0
-        try:
-            for index_in_file, atoms in enumerate(_iter_frames(path)):
-                count += 1
-                frame_id = f"{path.name}:{index_in_file}"
-                frame_schema.observe(atoms, frame_id)
-                info = atoms.info
-                for dimension in ("material", "structure", "hop", "neb_path"):
-                    _observe_source(trackers[dimension], info, frame_id)
-                split, field, conflict = _source_value(info, IDENTIFIER_FIELDS["published_split"])
-                if split is not None:
-                    conflict = conflict or (
-                        filename_split is not None and split.lower() != filename_split
-                    )
-                    trackers["published_split"].observe(
-                        split, field, SOURCE_PROVIDED, frame_id, conflict=conflict
-                    )
-                else:
-                    split = filename_split
-                    trackers["published_split"].observe(split, "source_filename", DERIVED, frame_id)
-                trackers["chemical_system"].observe(
-                    chemical_system(atoms.get_chemical_symbols()), "derived:frame_species", DERIVED, frame_id
+    sample_set = set(sample_materials)
+    sampled: list[list[Any]] = []
+    seen_per_material: Counter[str] = Counter()
+    errors: list[str] = []
+    filename_split = split_from_filename(source.name)
+    count = 0
+    try:
+        for index_in_file, atoms in enumerate(_iter_frames(source)):
+            count += 1
+            frame_id = f"{source.name}:{index_in_file}"
+            frame_schema.observe(atoms, frame_id)
+            info = atoms.info
+            for dimension in ("material", "structure", "hop", "neb_path"):
+                _observe_source(trackers[dimension], info, frame_id)
+            split, field, conflict = _source_value(info, IDENTIFIER_FIELDS["published_split"])
+            if split is not None:
+                conflict = conflict or (filename_split is not None and split.lower() != filename_split)
+                trackers["published_split"].observe(
+                    split, field, SOURCE_PROVIDED, frame_id, conflict=conflict
                 )
-                trackers["frame"].observe(
-                    frame_id, "derived:<source-file>:<zero-based-frame-index>", DERIVED, frame_id
-                )
-                material = _source_value(info, IDENTIFIER_FIELDS["material"])[0]
-                split_counts[split or "<missing>"] += 1
-                if material is not None and split is not None:
-                    material_splits[material].add(split)
-                if material in sample_set:
-                    if sampled_per_material[material] < settings["provenance_max_frames_per_material"]:
-                        sampled_per_material[material] += 1
-                        flattened_sample.append(
-                            (frame_id, material, FrameGeometry.from_atoms(atoms))
-                        )
-                    else:
-                        frames_beyond_cap += 1
-        except Exception as exc:
-            errors.append(f"{path}: {type(exc).__name__}: {exc}")
-        finally:
-            frame_schema.add_file(count)
-            per_file.append({
-                "file": path.name,
-                "frames": count,
-                "published_split": filename_split,
-                "published_split_value_source": "source_filename" if filename_split else None,
-            })
+            else:
+                split = filename_split
+                trackers["published_split"].observe(split, "source_filename", DERIVED, frame_id)
+            trackers["chemical_system"].observe(
+                chemical_system(atoms.get_chemical_symbols()), "derived:frame_species", DERIVED, frame_id
+            )
+            trackers["frame"].observe(
+                frame_id, "derived:<source-file>:<zero-based-frame-index>", DERIVED, frame_id
+            )
+            material = _source_value(info, IDENTIFIER_FIELDS["material"])[0]
+            split_counts[split or "<missing>"] += 1
+            if material is not None and split is not None:
+                material_splits[material].add(split)
+            if material in sample_set:
+                # Keep at most ``cap`` frames per material per file; the merge
+                # applies the same cap across files in canonical order.
+                if seen_per_material[material] < cap:
+                    sampled.append(
+                        [frame_id, material, FrameGeometry.from_atoms(atoms).to_state()]
+                    )
+                seen_per_material[material] += 1
+    except Exception as exc:
+        errors.append(f"{source}: {type(exc).__name__}: {exc}")
+    finally:
+        frame_schema.add_file(count)
+    return {
+        "file": source.name,
+        "frames": count,
+        "published_split": filename_split,
+        "errors": errors,
+        "trackers": {name: tracker.to_state() for name, tracker in trackers.items()},
+        "frame_schema": frame_schema.to_state(),
+        "split_counts": dict(sorted(split_counts.items())),
+        "material_splits": {m: sorted(v) for m, v in sorted(material_splits.items())},
+        "sample_frames": sampled,
+        "sample_seen_per_material": dict(sorted(seen_per_material.items())),
+    }
 
+
+def _merge_mplitrj_units(states: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
+    """Merge file-unit states given in canonical file order."""
+
+    limit = settings["example_limit"]
+    cap = settings["provenance_max_frames_per_material"]
+    trackers = _trackers("MPLiTrj", limit, LINKAGE_DIMENSIONS + ("published_split",))
+    frame_schema = FrameSchema(limit)
+    split_counts: Counter[str] = Counter()
+    material_splits: dict[str, set[str]] = defaultdict(set)
+    kept: Counter[str] = Counter()
+    seen = 0
+    sample: list[list[Any]] = []
+    per_file: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for state in states:
+        for name, tracker in trackers.items():
+            tracker.absorb(IdentifierTracker.from_state(state["trackers"][name]))
+        frame_schema.absorb(FrameSchema.from_state(state["frame_schema"]))
+        split_counts.update(state["split_counts"])
+        for material, splits in state["material_splits"].items():
+            material_splits[material].update(splits)
+        for frame_id, material, geometry in state["sample_frames"]:
+            if kept[material] < cap:
+                kept[material] += 1
+                sample.append([frame_id, material, geometry])
+        seen += sum(state["sample_seen_per_material"].values())
+        errors.extend(state["errors"])
+        split = state["published_split"]
+        per_file.append({
+            "file": state["file"],
+            "frames": state["frames"],
+            "published_split": split,
+            "published_split_value_source": "source_filename" if split else None,
+        })
+    return {
+        "trackers": trackers,
+        "frame_schema": frame_schema,
+        "split_counts": split_counts,
+        "material_splits": material_splits,
+        "sample_frames": sample,
+        "frames_beyond_cap": seen - len(sample),
+        "per_file": per_file,
+        "errors": errors,
+    }
+
+
+def _mplitrj_provenance_unit(
+    raw_archive: str | None,
+    settings: dict[str, Any],
+    prepared: dict[str, Any],
+    sample_frames: list[list[Any]],
+    frames_beyond_cap: int,
+) -> dict[str, Any]:
+    """Structural frame-to-hop mapping check on the bounded provenance sample."""
+
+    limit = settings["example_limit"]
+    archive_record = prepared["archive_record"]
     mapping: dict[str, Any] = {
         "status": "not_evaluated",
         "reason": archive_record.get("error", "raw archive unavailable"),
     }
-    if index is not None and raw_archive is not None:
-        try:
-            with zipfile.ZipFile(raw_archive, mode="r") as archive:
-                raw_frames, raw_failures = litraj_provenance.load_raw_frames(
-                    archive, index, sample_materials, example_limit=limit
-                )
-        except Exception as exc:
-            mapping["reason"] = f"raw archive frames unreadable: {type(exc).__name__}: {exc}"
-        else:
-            mapping = litraj_provenance.validate_mapping(
-                flattened_sample,
-                raw_frames,
-                example_limit=limit,
-                raw_read_failures=raw_failures.count,
-                unparseable_edge_ids=archive_record["structure"]["unparseable_edge_ids"]["count"],
+    if not prepared["archive_indexed"] or raw_archive is None:
+        return mapping
+    flattened = [
+        (frame_id, material, FrameGeometry.from_state(geometry))
+        for frame_id, material, geometry in sample_frames
+    ]
+    try:
+        with zipfile.ZipFile(raw_archive, mode="r") as archive:
+            index = litraj_provenance.index_archive(archive)
+            raw_frames, raw_failures = litraj_provenance.load_raw_frames(
+                archive, index, prepared["sample_materials"], example_limit=limit
             )
-            mapping["raw_read_failure_details"] = raw_failures.to_json(
-                "archive member read failure"
-            )
-            mapping["sample_selection"] = (
-                f"first {settings['provenance_sample_materials']} sorted archive material IDs "
-                f"with <= {settings['provenance_max_members_per_material']} hop members; at most "
-                f"{settings['provenance_max_frames_per_material']} flattened frames per material "
-                "in file order"
-            )
-            mapping["flattened_frames_beyond_cap"] = frames_beyond_cap
-            if not flattened_sample:
-                mapping["reason"] = "no flattened frames belong to the sampled materials"
+    except Exception as exc:
+        mapping["reason"] = f"raw archive frames unreadable: {type(exc).__name__}: {exc}"
+        return mapping
+    mapping = litraj_provenance.validate_mapping(
+        flattened,
+        raw_frames,
+        example_limit=limit,
+        raw_read_failures=raw_failures.count,
+        unparseable_edge_ids=archive_record["structure"]["unparseable_edge_ids"]["count"],
+    )
+    mapping["raw_read_failure_details"] = raw_failures.to_json("archive member read failure")
+    mapping["sample_selection"] = (
+        f"first {settings['provenance_sample_materials']} sorted archive material IDs "
+        f"with <= {settings['provenance_max_members_per_material']} hop members; at most "
+        f"{settings['provenance_max_frames_per_material']} flattened frames per material "
+        "in file order"
+    )
+    mapping["flattened_frames_beyond_cap"] = frames_beyond_cap
+    if not flattened:
+        mapping["reason"] = "no flattened frames belong to the sampled materials"
+    return mapping
+
+
+def _mplitrj_finalize(
+    files: list[Path],
+    settings: dict[str, Any],
+    prepared: dict[str, Any],
+    merged: dict[str, Any],
+    mapping: dict[str, Any],
+) -> dict[str, Any]:
+    limit = settings["example_limit"]
+    trackers = merged["trackers"]
+    frame_schema = merged["frame_schema"]
+    archive_record = json.loads(json.dumps(prepared["archive_record"]))
+    warnings: list[str] = []
+    if archive_record.get("error"):
+        warnings.append(f"Raw archive could not be indexed: {archive_record['error']}")
     archive_record["mapping_validation"] = mapping
 
     hop_tracker = trackers["hop"]
@@ -1041,28 +1261,52 @@ def _audit_mplitrj(
     linkage = {
         dimension: sorted(trackers[dimension].values or {}) for dimension in LINKAGE_DIMENSIONS
     }
-    linkage["raw_archive_hop"] = [] if index is None else list(index.hops)
+    linkage["raw_archive_hop"] = list(prepared["archive_hops"])
+    schemas = list(prepared["aux_schemas"])
     schemas.append({"format": "extxyz", "group": "*.xyz", **frame_schema.to_json()})
+    split_counts = merged["split_counts"]
     return {
         "trackers": trackers,
         "capabilities": capabilities,
         "schemas": schemas,
         "summary": {
             "selected_variant": variant,
-            "files": per_file,
+            "files": merged["per_file"],
             "published_split_counts": dict(sorted(split_counts.items())),
             "materials_spanning_splits": _span_diagnostic(
-                material_splits, limit, "material_id observed in more than one published split"
+                merged["material_splits"], limit,
+                "material_id observed in more than one published split",
             ),
             "raw_archive": archive_record,
         },
         "frames": frame_schema.frames,
         "csv_rows": 0,
         "splits": dict(sorted(split_counts.items())),
-        "errors": errors,
+        "errors": list(prepared["aux_errors"]) + merged["errors"],
         "warnings": warnings,
         "linkage_values": linkage,
     }
+
+
+def _audit_mplitrj(
+    files: list[Path], settings: dict[str, Any], raw_archive: Path | None
+) -> dict[str, Any]:
+    """Serial composition of the MPLiTrj work units (same code as the parallel path)."""
+
+    prepared = _mplitrj_prepare(files, settings, raw_archive)
+    states = [
+        _mplitrj_file_unit(str(path), settings, prepared["sample_materials"])
+        for path in mplitrj_source_files(files)
+    ]
+    merged = _merge_mplitrj_units(states, settings)
+    mapping = _mplitrj_provenance_unit(
+        None if raw_archive is None else str(raw_archive),
+        settings,
+        prepared,
+        merged["sample_frames"],
+        merged["frames_beyond_cap"],
+    )
+    return _mplitrj_finalize(files, settings, prepared, merged, mapping)
 
 
 # --------------------------------------------------------------------------- FPMD
@@ -1375,7 +1619,17 @@ def audit_dataset(
         result = _audit_fpmd(files, settings)
     else:
         result = _audit_indexed_pool(dataset, files, settings)
+    return _dataset_report(dataset, files, identities, settings, result, started)
 
+
+def _dataset_report(
+    dataset: str,
+    files: list[Path],
+    identities: list[dict[str, Any]],
+    settings: dict[str, Any],
+    result: dict[str, Any],
+    started: str,
+) -> dict[str, Any]:
     errors = result["errors"]
     blockers = _blockers(result, dataset)
     if not files:
@@ -1473,11 +1727,271 @@ def _cross_dataset_linkage(
     return result
 
 
-def run_audit(config_path: str | Path, *, resume: bool = False) -> tuple[dict[str, Any], Path]:
-    """Run or resume the Gate G0 audit and return the report and its path."""
+class G0ExecutionError(RuntimeError):
+    """One or more work units crashed; completed checkpoints were kept."""
 
+    def __init__(self, failures: dict[str, str], failures_path: Path) -> None:
+        self.failures = failures
+        self.failures_path = failures_path
+        detail = "; ".join(f"{key}: {message}" for key, message in failures.items())
+        super().__init__(f"Gate G0 work units failed ({detail}); see {failures_path}")
+
+
+# Spawned workers start clean: no inherited locks, file handles or monkeypatched
+# state, and identical behaviour on every platform.
+_START_METHOD = "spawn"
+_THREAD_LIMIT_VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+
+
+def resolve_workers(requested: Any, settings: dict[str, Any]) -> int:
+    """CLI value if given, else the JSON config default; must be a positive integer."""
+
+    value = settings.get("workers", 1) if requested is None else requested
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"workers must be a positive integer, got {value!r}")
+    return value
+
+
+def _scientific_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in settings.items() if k not in OPERATIONAL_SETTINGS}
+
+
+def _scientific_config(config: dict[str, Any]) -> dict[str, Any]:
+    snapshot = json.loads(json.dumps({k: v for k, v in config.items() if k != "_config_path"}))
+    for key in OPERATIONAL_SETTINGS:
+        snapshot.get("audit", {}).pop(key, None)
+    return snapshot
+
+
+@dataclass(frozen=True)
+class WorkUnit:
+    key: str
+    kind: str
+    payload: dict[str, Any]
+    checkpoint: Path
+    fingerprint: str
+
+
+def _execute_unit(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Top-level (picklable) worker entry point; returns compact JSON-able results."""
+
+    started = time.perf_counter()
+    if kind == "dataset":
+        result = audit_dataset(
+            payload["dataset"],
+            [Path(path) for path in payload["files"]],
+            payload["identities"],
+            settings=payload["settings"],
+        )
+    elif kind == "mplitrj_file":
+        result = _mplitrj_file_unit(payload["path"], payload["settings"], payload["sample_materials"])
+    elif kind == "mplitrj_provenance":
+        result = _mplitrj_provenance_unit(
+            payload["raw_archive"],
+            payload["settings"],
+            payload["prepared"],
+            payload["sample_frames"],
+            payload["frames_beyond_cap"],
+        )
+    else:
+        raise ValueError(f"unknown work unit kind {kind!r}")
+    return {"result": result, "elapsed_seconds": round(time.perf_counter() - started, 3)}
+
+
+def _externalize_linkage(run_root: Path, run_id: str, dataset: str, report: dict[str, Any]) -> dict[str, Any]:
+    """Move full identifier sets to a sidecar; they scale with the data.
+
+    The sidecar is used only for cross-dataset linkage and is written before the
+    checkpoint that references it, so a reusable checkpoint implies its sidecar.
+    """
+
+    values = report["linkage_values"]
+    _atomic_json(
+        run_root / "linkage" / f"{dataset}.json",
+        {"dataset": dataset, "run_id": run_id, "values": values},
+    )
+    compact = dict(report)
+    compact["linkage_values"] = {
+        "file": f"linkage/{dataset}.json",
+        "counts": {key: len(items) for key, items in values.items()},
+        "sha256": _fingerprint(values),
+    }
+    return compact
+
+
+def _linkage_sidecar_matches(unit: WorkUnit, result: dict[str, Any]) -> bool:
+    summary = result.get("linkage_values", {})
+    try:
+        stored = json.loads(
+            (unit.checkpoint.parent.parent / summary["file"]).read_text(encoding="utf-8")
+        )
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+    return _fingerprint(stored.get("values")) == summary.get("sha256")
+
+
+def _load_checkpoint(unit: WorkUnit) -> dict[str, Any] | None:
+    """Reuse a checkpoint only if it matches this unit's fingerprint exactly."""
+
+    try:
+        stored = json.loads(unit.checkpoint.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if stored.get("_unit_fingerprint") != unit.fingerprint:
+        return None
+    result = stored.get("result")
+    # Errored units are recomputed: an error may have been transient.
+    if not isinstance(result, dict) or result.get("errors"):
+        return None
+    if unit.kind == "dataset" and not _linkage_sidecar_matches(unit, result):
+        return None
+    return stored
+
+
+@contextmanager
+def _worker_pool(workers: int):
+    """Bounded process pool; ``None`` for serial in-process execution."""
+
+    if workers == 1:
+        yield None
+        return
+    # One BLAS/OpenMP thread per worker unless the caller chose otherwise;
+    # spawned children read these at start-up.
+    previous = {name: os.environ.get(name) for name in _THREAD_LIMIT_VARIABLES}
+    for name in _THREAD_LIMIT_VARIABLES:
+        os.environ.setdefault(name, "1")
+    try:
+        with ProcessPoolExecutor(
+            max_workers=workers, mp_context=multiprocessing.get_context(_START_METHOD)
+        ) as pool:
+            yield pool
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _run_units(
+    units: list[WorkUnit],
+    pool: ProcessPoolExecutor | None,
+    *,
+    run_id: str,
+    resume: bool,
+    progress: Callable[[str], None],
+    timings: dict[str, dict[str, Any]],
+    failures: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Run units, checkpointing each success atomically as it completes.
+
+    Results are keyed by unit and consumed by the caller in canonical order, so
+    completion order never reaches the report.
+    """
+
+    results: dict[str, dict[str, Any]] = {}
+    pending: list[WorkUnit] = []
+    for unit in units:
+        stored = _load_checkpoint(unit) if resume else None
+        if stored is not None:
+            results[unit.key] = stored["result"]
+            timings[unit.key] = {"elapsed_seconds": stored["elapsed_seconds"], "reused": True}
+            progress(f"G0 {unit.key}: reused checkpoint")
+        else:
+            pending.append(unit)
+
+    def record(unit: WorkUnit, outcome: dict[str, Any]) -> None:
+        if unit.kind == "dataset":
+            outcome = {
+                **outcome,
+                "result": _externalize_linkage(
+                    unit.checkpoint.parent.parent, run_id, unit.key, outcome["result"]
+                ),
+            }
+        _atomic_json(
+            unit.checkpoint,
+            {
+                "unit": unit.key,
+                "run_id": run_id,
+                "_unit_fingerprint": unit.fingerprint,
+                "elapsed_seconds": outcome["elapsed_seconds"],
+                "result": outcome["result"],
+            },
+        )
+        results[unit.key] = outcome["result"]
+        timings[unit.key] = {"elapsed_seconds": outcome["elapsed_seconds"], "reused": False}
+        result = outcome["result"]
+        frames = result.get("frames", result.get("record_counts", {}).get("frames"))
+        detail = "" if frames is None else f", frames={frames}"
+        progress(f"G0 {unit.key}: complete{detail}, {outcome['elapsed_seconds']:.1f}s")
+
+    def fail(unit: WorkUnit, exc: BaseException) -> None:
+        if isinstance(exc, BrokenProcessPool):
+            # A dead worker (e.g. killed for memory) breaks every pending future;
+            # the culprit cannot be identified, so do not blame each unit.
+            failures["worker_pool"] = (
+                "a worker process terminated abruptly (e.g. out of memory); "
+                "the pool is unusable"
+            )
+            failures[unit.key] = "not completed: worker pool broken"
+        else:
+            failures[unit.key] = f"{type(exc).__name__}: {exc}"
+        progress(f"G0 {unit.key}: FAILED {failures[unit.key]}")
+
+    if pool is None:
+        for unit in pending:
+            progress(f"G0 {unit.key}: starting")
+            try:
+                outcome = _execute_unit(unit.kind, unit.payload)
+            except Exception as exc:
+                fail(unit, exc)
+            else:
+                record(unit, outcome)
+        return results
+
+    futures: dict[Future, WorkUnit] = {}
+    for unit in pending:
+        if "worker_pool" in failures:
+            failures[unit.key] = "not run: worker pool broken"
+            continue
+        try:
+            futures[pool.submit(_execute_unit, unit.kind, unit.payload)] = unit
+        except Exception as exc:  # e.g. BrokenProcessPool after an earlier crash
+            fail(unit, exc)
+            continue
+        progress(f"G0 {unit.key}: starting")
+    for future in as_completed(futures):
+        unit = futures[future]
+        try:
+            outcome = future.result()
+        except Exception as exc:
+            fail(unit, exc)
+        else:
+            record(unit, outcome)
+    return results
+
+
+def run_audit(
+    config_path: str | Path,
+    *,
+    resume: bool = False,
+    workers: int | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[dict[str, Any], Path]:
+    """Run or resume the Gate G0 audit and return the report and its path.
+
+    Independent work units (each non-MPLiTrj dataset, each MPLiTrj source file,
+    then the MPLiTrj provenance sample) run on a bounded process pool; with
+    ``workers=1`` the same units run in-process in canonical order.  Only this
+    parent process writes checkpoints and the canonical report.
+    """
+
+    progress = progress or (lambda message: None)
+    wall_start = time.perf_counter()
     config = load_config(config_path)
     settings = _settings(config)
+    workers = resolve_workers(workers, settings)
+    science = _scientific_settings(settings)
     data_root = Path(config["paths"]["data_root"])
     raw_root = data_root / "raw"
     output_root = _safe_output_root(config)
@@ -1497,10 +2011,12 @@ def run_audit(config_path: str | Path, *, resume: bool = False) -> tuple[dict[st
     implementation = _implementation_record()
     environment = _environment_capabilities()
     git_sha = _git("rev-parse", "HEAD")
+    # The worker count is operational, so it is excluded: serial and parallel
+    # runs share run IDs and checkpoints.
     run_inputs = {
         "schema_version": SCHEMA_VERSION,
         "git_sha": git_sha,
-        "configuration_sha256": configuration["sha256"],
+        "configuration": _fingerprint(_scientific_config(config)),
         "implementation": implementation,
         "environment": environment,
         "inputs": identities,
@@ -1520,59 +2036,197 @@ def run_audit(config_path: str | Path, *, resume: bool = False) -> tuple[dict[st
             and existing.get("status") in {"pass", "partial"}
             and not existing.get("errors")
             and datasets_reusable
+            # The run ID ignores operational settings, so only reuse a report
+            # whose recorded configuration is the file actually used now.
+            and existing.get("configuration", {}).get("sha256") == configuration["sha256"]
+            and existing.get("configuration", {}).get("path") == configuration["path"]
         ):
+            progress(f"G0: reused complete report {final_path}")
             return existing, final_path
 
     started = utc_now()
+    if final_path.exists():
+        # This run supersedes the previous canonical report; set it aside so a
+        # failed rerun never leaves an audit.json that looks complete.
+        final_path.replace(run_root / "audit.previous.json")
     _atomic_json(
         run_root / "inputs.json",
         {"run_id": run_id, "inputs": identities, "mplitrj_raw_archive": archive_identity},
     )
-    dataset_reports = []
+    base_fingerprint = {
+        "run_id": run_id,
+        "git_sha": git_sha,
+        "implementation": implementation,
+        "environment": environment,
+        "settings": science,
+    }
+
+    def fingerprint(key: str, **extra: Any) -> str:
+        return _fingerprint({**base_fingerprint, "unit": key, **extra})
+
+    timings: dict[str, dict[str, Any]] = {}
+    failures: dict[str, str] = {}
+    dataset_units = [
+        WorkUnit(
+            key=name,
+            kind="dataset",
+            payload={
+                "dataset": name,
+                "files": [str(path) for path in discovered[name]],
+                "identities": identities[name],
+                "settings": science,
+            },
+            checkpoint=run_root / "datasets" / f"{name}.json",
+            fingerprint=fingerprint(name, inputs=identities[name]),
+        )
+        for name in DATASETS
+        if name != "MPLiTrj"
+    ]
+    mpl_files = discovered["MPLiTrj"]
+    mpl_sources = mplitrj_source_files(mpl_files)
+    mpl_final = WorkUnit(
+        key="MPLiTrj",
+        kind="dataset",
+        payload={},
+        checkpoint=run_root / "datasets" / "MPLiTrj.json",
+        fingerprint=fingerprint("MPLiTrj", inputs=identities["MPLiTrj"] + archive_identity),
+    )
+    mpl_report = _load_checkpoint(mpl_final) if resume else None
+
+    with _worker_pool(workers) as pool:
+        file_units: list[WorkUnit] = []
+        prepared: dict[str, Any] | None = None
+        if mpl_report is None:
+            progress("G0 MPLiTrj: indexing raw archive and auxiliary files")
+            prepare_start = time.perf_counter()
+            prepared = _mplitrj_prepare(mpl_files, science, raw_archive)
+            timings["MPLiTrj/prepare"] = {
+                "elapsed_seconds": round(time.perf_counter() - prepare_start, 3),
+                "reused": False,
+            }
+            by_identifier = {item["path"]: item for item in identities["MPLiTrj"]}
+            for path in mpl_sources:
+                key = f"MPLiTrj/{path.stem}"
+                file_units.append(
+                    WorkUnit(
+                        key=key,
+                        kind="mplitrj_file",
+                        payload={
+                            "path": str(path),
+                            "settings": science,
+                            "sample_materials": prepared["sample_materials"],
+                        },
+                        checkpoint=run_root / "checkpoints" / "MPLiTrj" / f"{path.stem}.json",
+                        fingerprint=fingerprint(
+                            key,
+                            inputs=[by_identifier[str(path)]],
+                            sample_materials=prepared["sample_materials"],
+                        ),
+                    )
+                )
+            if len({unit.key for unit in file_units}) != len(file_units):
+                raise ValueError("MPLiTrj source files must have unique stems for checkpointing")
+        else:
+            progress("G0 MPLiTrj: reused checkpoint")
+            timings["MPLiTrj"] = {"elapsed_seconds": mpl_report["elapsed_seconds"], "reused": True}
+
+        # Longest units first keeps the pool busy; results are re-ordered later.
+        first_batch = file_units + dataset_units
+        results = _run_units(
+            first_batch, pool, run_id=run_id, resume=resume,
+            progress=progress, timings=timings, failures=failures,
+        )
+
+        if (
+            prepared is not None
+            and "worker_pool" not in failures
+            and not any(unit.key in failures for unit in file_units)
+        ):
+            merged = _merge_mplitrj_units([results[unit.key] for unit in file_units], science)
+            provenance = WorkUnit(
+                key="MPLiTrj/provenance_sample",
+                kind="mplitrj_provenance",
+                payload={
+                    "raw_archive": None if raw_archive is None else str(raw_archive),
+                    "settings": science,
+                    "prepared": prepared,
+                    "sample_frames": merged["sample_frames"],
+                    "frames_beyond_cap": merged["frames_beyond_cap"],
+                },
+                checkpoint=run_root / "checkpoints" / "MPLiTrj" / "provenance_sample.json",
+                fingerprint=fingerprint(
+                    "MPLiTrj/provenance_sample",
+                    raw_archive=archive_identity,
+                    prepared=_fingerprint(prepared),
+                    sample=_fingerprint(merged["sample_frames"]),
+                    frames_beyond_cap=merged["frames_beyond_cap"],
+                ),
+            )
+            results.update(
+                _run_units(
+                    [provenance], pool, run_id=run_id, resume=resume,
+                    progress=progress, timings=timings, failures=failures,
+                )
+            )
+            if provenance.key not in failures:
+                finalize_start = time.perf_counter()
+                result = _mplitrj_finalize(
+                    mpl_files, science, prepared, merged, results[provenance.key]
+                )
+                report = _externalize_linkage(
+                    run_root,
+                    run_id,
+                    "MPLiTrj",
+                    _dataset_report(
+                        "MPLiTrj", mpl_files, identities["MPLiTrj"], science, result, started
+                    ),
+                )
+                elapsed = round(
+                    time.perf_counter() - finalize_start
+                    + timings["MPLiTrj/prepare"]["elapsed_seconds"],
+                    3,
+                )
+                _atomic_json(
+                    mpl_final.checkpoint,
+                    {
+                        "unit": "MPLiTrj",
+                        "run_id": run_id,
+                        "_unit_fingerprint": mpl_final.fingerprint,
+                        "elapsed_seconds": elapsed,
+                        "result": report,
+                    },
+                )
+                mpl_report = {"result": report}
+                timings["MPLiTrj/finalize"] = {
+                    "elapsed_seconds": round(time.perf_counter() - finalize_start, 3),
+                    "reused": False,
+                }
+        elif prepared is not None:
+            failures.setdefault(
+                "MPLiTrj/provenance_sample",
+                "not run: an MPLiTrj source-file unit failed or the worker pool broke",
+            )
+
+    if failures:
+        failures_path = run_root / "failures.json"
+        _atomic_json(failures_path, {"run_id": run_id, "failures": dict(sorted(failures.items()))})
+        raise G0ExecutionError(dict(sorted(failures.items())), failures_path)
+    stale_failures = run_root / "failures.json"
+    if stale_failures.exists():
+        stale_failures.unlink()
+
+    # Canonical dataset order, independent of completion order.
+    dataset_reports: list[dict[str, Any]] = []
     linkage_values: dict[str, dict[str, list[str]]] = {}
     for name in DATASETS:
-        dataset_identities = identities[name] + (archive_identity if name == "MPLiTrj" else [])
-        dataset_fingerprint = _fingerprint(
-            {"inputs": dataset_identities, "settings": settings, "environment": environment}
-        )
-        checkpoint = run_root / "datasets" / f"{name}.json"
-        # Full identifier sets scale with the data, so they live in a sidecar
-        # used only for cross-dataset linkage, never in the reports themselves.
-        linkage_path = run_root / "linkage" / f"{name}.json"
-        report = None
-        if resume and checkpoint.exists() and linkage_path.exists():
-            candidate = json.loads(checkpoint.read_text(encoding="utf-8"))
-            if (
-                candidate.get("_input_fingerprint") == dataset_fingerprint
-                and candidate.get("status") in {"pass", "partial"}
-                and not candidate.get("errors")
-            ):
-                report = candidate
-                linkage_values[name] = json.loads(linkage_path.read_text(encoding="utf-8"))[
-                    "values"
-                ]
-        if report is None:
-            report = audit_dataset(
-                name,
-                discovered[name],
-                identities[name],
-                settings=settings,
-                raw_archive=raw_archive if name == "MPLiTrj" else None,
-            )
-            values = report.pop("linkage_values")
-            report["linkage_values"] = {
-                "file": f"linkage/{name}.json",
-                "counts": {key: len(items) for key, items in values.items()},
-                "sha256": _fingerprint(values),
-            }
-            report["_input_fingerprint"] = dataset_fingerprint
-            _atomic_json(linkage_path, {"dataset": name, "run_id": run_id, "values": values})
-            _atomic_json(checkpoint, report)
-            linkage_values[name] = values
+        report = mpl_report["result"] if name == "MPLiTrj" else results[name]
+        linkage_path = run_root / report["linkage_values"]["file"]
+        linkage_values[name] = json.loads(linkage_path.read_text(encoding="utf-8"))["values"]
         dataset_reports.append(report)
 
     statuses = {item["status"] for item in dataset_reports}
     status = "fail" if "fail" in statuses else ("partial" if "partial" in statuses else "pass")
+    unit_seconds = {key: value["elapsed_seconds"] for key, value in sorted(timings.items())}
     report = {
         "schema_version": SCHEMA_VERSION,
         "git_sha": git_sha,
@@ -1610,10 +2264,20 @@ def run_audit(config_path: str | Path, *, resume: bool = False) -> tuple[dict[st
         ],
         "datasets": dataset_reports,
         "environment": {"python": sys.version, "platform": platform.platform(), **environment},
+        # Operational metadata only; excluded from scientific comparisons.
+        "execution": {
+            "workers": workers,
+            "mode": "in-process" if workers == 1 else f"process pool ({_START_METHOD})",
+            "wall_seconds": round(time.perf_counter() - wall_start, 3),
+            "unit_elapsed_seconds": unit_seconds,
+            "units_reused": sorted(key for key, value in timings.items() if value["reused"]),
+            "longest_unit": max(unit_seconds, key=unit_seconds.get) if unit_seconds else None,
+        },
         "command": " ".join(sys.argv),
         "seed": config.get("runtime", {}).get("seed"),
     }
     _atomic_json(final_path, report)
+    progress(f"G0: report written {final_path}")
     return report, final_path
 
 
