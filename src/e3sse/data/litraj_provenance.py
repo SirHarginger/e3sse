@@ -440,31 +440,67 @@ def _buckets(
     }
 
 
-def _matching_indices(
+def _within_tolerance(
+    positions: np.ndarray,
+    query: np.ndarray,
+    cell: np.ndarray,
+    inverse: np.ndarray | None,
+    position_atol: float,
+) -> np.ndarray:
+    """Per candidate: is every atom within tolerance after minimum-image wrapping?"""
+
+    delta = positions - query
+    if inverse is not None:
+        fractional = delta @ inverse
+        fractional -= np.round(fractional)
+        delta = fractional @ cell
+    return np.linalg.norm(delta, axis=2).max(axis=1, initial=0.0) <= position_atol
+
+
+def matching_indices(
     bucket: _Bucket,
     geometry: FrameGeometry,
     *,
     position_atol: float,
     cell_atol: float,
     chunk: int = 1024,
+    probe_atoms: int = 8,
 ) -> np.ndarray:
-    """Vectorised geometries_match over one bucket, chunked to bound memory."""
+    """Vectorised geometries_match over one bucket, chunked to bound memory.
+
+    Every atom must be within tolerance, so a few evenly spaced probe atoms are
+    tested first; failing them is sufficient for rejection, and survivors are
+    then tested on all atoms.  The cascade is exact: it only saves work.
+    """
 
     cell_ok = np.all(np.abs(bucket.cells - geometry.cell) <= cell_atol, axis=(1, 2))
     candidates = np.flatnonzero(cell_ok)
     periodic = abs(np.linalg.det(geometry.cell)) > 1e-8
     inverse = np.linalg.inv(geometry.cell) if periodic else None
+    atoms = len(geometry.numbers)
+    probe = np.unique(np.linspace(0, max(atoms - 1, 0), num=min(probe_atoms, atoms), dtype=int))
     hits: list[np.ndarray] = []
     for start in range(0, len(candidates), chunk):
         selected = candidates[start : start + chunk]
-        delta = bucket.positions[selected] - geometry.positions
-        if periodic:
-            fractional = delta @ inverse
-            fractional -= np.round(fractional)
-            delta = fractional @ geometry.cell
-        distance = np.linalg.norm(delta, axis=2).max(axis=1, initial=0.0)
-        hits.append(selected[distance <= position_atol])
+        if atoms > len(probe):
+            keep = _within_tolerance(
+                bucket.positions[selected][:, probe],
+                geometry.positions[probe],
+                geometry.cell,
+                inverse,
+                position_atol,
+            )
+            selected = selected[keep]
+        if len(selected):
+            keep = _within_tolerance(
+                bucket.positions[selected], geometry.positions, geometry.cell, inverse, position_atol
+            )
+            hits.append(selected[keep])
     return np.concatenate(hits) if hits else np.empty(0, dtype=int)
+
+
+_matching_indices = matching_indices
+RawGroup = _Bucket
 
 
 def validate_mapping(

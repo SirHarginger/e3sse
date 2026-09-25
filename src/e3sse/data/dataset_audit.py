@@ -43,7 +43,7 @@ from ase import Atoms
 from ase.io import iread
 
 from e3sse.config import load_config
-from e3sse.data import litraj_provenance
+from e3sse.data import litraj_provenance, mplitrj_provenance
 from e3sse.data.litraj_provenance import BoundedExamples, FrameGeometry
 
 SCHEMA_VERSION = "e3sse.g0.audit.v2"
@@ -93,6 +93,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "optimade_line_limit": 200,
     "provenance_max_members_per_material": 2000,
     "provenance_max_frames_per_material": 500,
+    # Full frame-to-hop index (see mplitrj_provenance); relative to outputs_root.
+    "mplitrj_provenance_dir": "provenance/mplitrj",
+    "provenance_position_atol": litraj_provenance.DEFAULT_POSITION_ATOL,
+    "provenance_cell_atol": litraj_provenance.DEFAULT_CELL_ATOL,
+    "provenance_energy_atol": litraj_provenance.DEFAULT_ENERGY_ATOL,
+    "provenance_max_material_raw_bytes": 1024**3,
+    # Re-hash indexed inputs in G0; size+mtime alone can survive content changes.
+    "provenance_verify_input_sha256": True,
     # Operational only: never part of run IDs, fingerprints or scientific output.
     "workers": 1,
 }
@@ -1183,12 +1191,60 @@ def _mplitrj_provenance_unit(
     return mapping
 
 
+def provenance_index_digest(state: dict[str, Any]) -> dict[str, Any]:
+    """Compact identity of an index state, for fingerprints and the G0 report."""
+
+    return {
+        key: state.get(key)
+        for key in ("status", "index_id", "expected_index_id", "manifest_sha256", "reason")
+        if state.get(key) is not None
+    }
+
+
+def _apply_provenance_index(
+    trackers: dict[str, IdentifierTracker],
+    frames: int,
+    index_state: dict[str, Any],
+    limit: int,
+) -> tuple[bool, str]:
+    """Decide same-hop exclusion from a validated full index; derive hop identifiers."""
+
+    counts = index_state["counts"]
+    hop = trackers["hop"]
+    hop.with_value = counts["mapped_count"]
+    hop.sources = Counter({"derived:mplitrj_provenance_index": counts["mapped_count"]})
+    hop.kinds = {DERIVED} if counts["mapped_count"] else set()
+    hop.values = Counter(index_state["edge_frame_counts"])
+    hop.missing = BoundedExamples(limit)
+    unresolved = BoundedExamples.from_state(index_state["unresolved_frames"])
+    hop.missing.absorb(unresolved)
+    hop.missing.count = max(frames - counts["mapped_count"], 0)
+    coverage = (
+        f"{counts['mapped_count']}/{frames} G0 frames mapped to a single hop "
+        f"(index records={counts['record_count']}, coverage_fraction="
+        f"{counts['coverage_fraction']:.6f}, ambiguous={counts['ambiguous_count']}, "
+        f"unmapped={counts['unmapped_count']}, error={counts['error_count']})"
+    )
+    complete = (
+        index_state["complete_coverage"]
+        and counts["record_count"] == frames
+        and counts["mapped_count"] == frames
+    )
+    if complete:
+        return True, f"full provenance index {index_state['index_id']}: {coverage}"
+    blockers = list(index_state["coverage_blockers"])
+    if counts["record_count"] != frames:
+        blockers.append("index record count differs from G0 frame count")
+    return False, f"provenance index {index_state['index_id']} incomplete: {coverage}; {blockers}"
+
+
 def _mplitrj_finalize(
     files: list[Path],
     settings: dict[str, Any],
     prepared: dict[str, Any],
     merged: dict[str, Any],
     mapping: dict[str, Any],
+    index_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     limit = settings["example_limit"]
     trackers = merged["trackers"]
@@ -1199,9 +1255,19 @@ def _mplitrj_finalize(
         warnings.append(f"Raw archive could not be indexed: {archive_record['error']}")
     archive_record["mapping_validation"] = mapping
 
+    index_state = index_state or {"status": "not_evaluated", "reason": "no index state supplied"}
     hop_tracker = trackers["hop"]
     if hop_tracker.status == "satisfied":
         same_hop, reason = True, "source-provided hop identifier on every frame"
+    elif index_state["status"] == "valid":
+        same_hop, reason = _apply_provenance_index(
+            trackers, frame_schema.frames, index_state, limit
+        )
+    elif index_state["status"] in {"stale", "invalid"}:
+        same_hop, reason = False, (
+            f"provenance index {index_state['status']}: {index_state['reason']} "
+            f"(expected {index_state.get('expected_index_id')}); rebuild required"
+        )
     elif mapping["status"] == "demonstrated_on_sample":
         same_hop, reason = False, (
             "frame-to-hop mapping demonstrated on a bounded sample only; a full "
@@ -1278,6 +1344,7 @@ def _mplitrj_finalize(
                 "material_id observed in more than one published split",
             ),
             "raw_archive": archive_record,
+            "hop_provenance_index": provenance_index_digest(index_state),
         },
         "frames": frame_schema.frames,
         "csv_rows": 0,
@@ -1289,7 +1356,10 @@ def _mplitrj_finalize(
 
 
 def _audit_mplitrj(
-    files: list[Path], settings: dict[str, Any], raw_archive: Path | None
+    files: list[Path],
+    settings: dict[str, Any],
+    raw_archive: Path | None,
+    index_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Serial composition of the MPLiTrj work units (same code as the parallel path)."""
 
@@ -1306,7 +1376,7 @@ def _audit_mplitrj(
         merged["sample_frames"],
         merged["frames_beyond_cap"],
     )
-    return _mplitrj_finalize(files, settings, prepared, merged, mapping)
+    return _mplitrj_finalize(files, settings, prepared, merged, mapping, index_state)
 
 
 # --------------------------------------------------------------------------- FPMD
@@ -1606,6 +1676,7 @@ def audit_dataset(
     *,
     settings: dict[str, Any] | None = None,
     raw_archive: Path | None = None,
+    index_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Audit one dataset against its role requirements without modifying sources."""
 
@@ -1614,7 +1685,7 @@ def audit_dataset(
     if dataset == "nebDFT2k":
         result = _audit_nebdft2k(files, settings)
     elif dataset == "MPLiTrj":
-        result = _audit_mplitrj(files, settings, raw_archive)
+        result = _audit_mplitrj(files, settings, raw_archive, index_state)
     elif dataset == "FPMD":
         result = _audit_fpmd(files, settings)
     else:
@@ -1770,6 +1841,10 @@ class WorkUnit:
     payload: dict[str, Any]
     checkpoint: Path
     fingerprint: str
+    # Parent-side only (never pickled): compact a result before checkpointing,
+    # and verify a stored result's side files before reusing it.
+    on_result: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    verify: Callable[[dict[str, Any]], bool] | None = None
 
 
 def _execute_unit(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1785,6 +1860,12 @@ def _execute_unit(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
     elif kind == "mplitrj_file":
         result = _mplitrj_file_unit(payload["path"], payload["settings"], payload["sample_materials"])
+    elif kind == "provenance_scan":
+        result = mplitrj_provenance.scan_flattened(payload["path"])
+    elif kind == "provenance_hash":
+        result = mplitrj_provenance.hash_file(payload["path"])
+    elif kind == "provenance_map":
+        result = mplitrj_provenance.map_bucket(**payload)
     elif kind == "mplitrj_provenance":
         result = _mplitrj_provenance_unit(
             payload["raw_archive"],
@@ -1845,6 +1926,8 @@ def _load_checkpoint(unit: WorkUnit) -> dict[str, Any] | None:
         return None
     if unit.kind == "dataset" and not _linkage_sidecar_matches(unit, result):
         return None
+    if unit.verify is not None and not unit.verify(result):
+        return None
     return stored
 
 
@@ -1901,6 +1984,8 @@ def _run_units(
             pending.append(unit)
 
     def record(unit: WorkUnit, outcome: dict[str, Any]) -> None:
+        if unit.on_result is not None:
+            outcome = {**outcome, "result": unit.on_result(outcome["result"])}
         if unit.kind == "dataset":
             outcome = {
                 **outcome,
@@ -1938,6 +2023,14 @@ def _run_units(
             failures[unit.key] = f"{type(exc).__name__}: {exc}"
         progress(f"G0 {unit.key}: FAILED {failures[unit.key]}")
 
+    def settle(unit: WorkUnit, outcome: dict[str, Any]) -> None:
+        # Writing side files or checkpoints can fail (e.g. disk full); record it
+        # like a unit failure instead of abandoning in-flight work.
+        try:
+            record(unit, outcome)
+        except Exception as exc:
+            fail(unit, exc)
+
     if pool is None:
         for unit in pending:
             progress(f"G0 {unit.key}: starting")
@@ -1946,7 +2039,7 @@ def _run_units(
             except Exception as exc:
                 fail(unit, exc)
             else:
-                record(unit, outcome)
+                settle(unit, outcome)
         return results
 
     futures: dict[Future, WorkUnit] = {}
@@ -1967,7 +2060,7 @@ def _run_units(
         except Exception as exc:
             fail(unit, exc)
         else:
-            record(unit, outcome)
+            settle(unit, outcome)
     return results
 
 
@@ -2025,6 +2118,18 @@ def run_audit(
     run_id = _fingerprint(run_inputs)[:16]
     run_root = output_root / "g0" / run_id
     final_path = run_root / "audit.json"
+    # The provenance index is a derived input built separately; it is validated
+    # (inputs, code, tolerances, shard hashes) on every run, never trusted blindly.
+    index_state = mplitrj_provenance.evaluate_index(
+        output_root,
+        settings,
+        mplitrj_provenance.index_inputs(
+            mplitrj_source_files(discovered["MPLiTrj"]), raw_archive, data_root
+        ),
+        data_root,
+    )
+    index_digest = provenance_index_digest(index_state)
+    progress(f"G0 MPLiTrj provenance index: {index_state['status']}")
     if resume and final_path.exists():
         existing = json.loads(final_path.read_text(encoding="utf-8"))
         datasets_reusable = all(
@@ -2040,6 +2145,7 @@ def run_audit(
             # whose recorded configuration is the file actually used now.
             and existing.get("configuration", {}).get("sha256") == configuration["sha256"]
             and existing.get("configuration", {}).get("path") == configuration["path"]
+            and existing.get("mplitrj_provenance_index") == index_digest
         ):
             progress(f"G0: reused complete report {final_path}")
             return existing, final_path
@@ -2089,7 +2195,11 @@ def run_audit(
         kind="dataset",
         payload={},
         checkpoint=run_root / "datasets" / "MPLiTrj.json",
-        fingerprint=fingerprint("MPLiTrj", inputs=identities["MPLiTrj"] + archive_identity),
+        fingerprint=fingerprint(
+            "MPLiTrj",
+            inputs=identities["MPLiTrj"] + archive_identity,
+            provenance_index=index_digest,
+        ),
     )
     mpl_report = _load_checkpoint(mpl_final) if resume else None
 
@@ -2171,7 +2281,7 @@ def run_audit(
             if provenance.key not in failures:
                 finalize_start = time.perf_counter()
                 result = _mplitrj_finalize(
-                    mpl_files, science, prepared, merged, results[provenance.key]
+                    mpl_files, science, prepared, merged, results[provenance.key], index_state
                 )
                 report = _externalize_linkage(
                     run_root,
@@ -2240,6 +2350,7 @@ def run_audit(
         "status": status,
         "dataset": "Gate G0 catalog",
         "input_manifest": str(run_root / "inputs.json"),
+        "mplitrj_provenance_index": index_digest,
         "gate_summary": {
             item["dataset"]: {
                 "role": item["role"],

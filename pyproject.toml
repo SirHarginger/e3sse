@@ -36,5 +36,6 @@ extend-exclude = [".agents"]
 # The audit must isolate any per-file parser failure and report it, whatever its type.
 "src/e3sse/data/dataset_audit.py" = ["BLE001"]
 "src/e3sse/data/litraj_provenance.py" = ["BLE001"]
+"src/e3sse/data/mplitrj_provenance.py" = ["BLE001"]
 # Pre-existing acquisition script, outside Gate G0 scope; not restyled here.
 "scripts/fetch_data.py" = ["BLE001", "C408", "UP024"]

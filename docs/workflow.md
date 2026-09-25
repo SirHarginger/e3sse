@@ -47,3 +47,47 @@ The command reads `/srv/ben/e3sse/data/raw` and, read-only,
 `/srv/ben/e3sse/data/downloads/MPLiTrj_raw.zip`, and writes only below the
 configured `outputs_root`. It requires `ase` in the environment. Re-running with `--resume` reuses completed
 per-dataset checkpoints only when their input fingerprint matches.
+
+## MPLiTrj frame-to-hop provenance index
+
+G0 reports `same_hop_exclusion_supported = true` only against a valid, complete
+index built by:
+
+```bash
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+PYTHONPATH=src python scripts/build_mplitrj_provenance.py \
+  --config configs/server.json --workers 8 --resume
+```
+
+The build reads `data/raw/MPLiTrj/*.xyz` and `data/downloads/MPLiTrj_raw.zip`
+read-only and writes under `outputs/provenance/mplitrj/<index_id>/`:
+
+- `manifest.json`: identities, hashes, counts, ordering evidence, and the nebDFT2k cross-check;
+- `edges.json`: frame counts per mapped edge;
+- `<split>/material-bucket-XX.json`: one record per flattened frame. `XX` is the first two hex digits of `sha256(material_id)`.
+
+Matching is per material. It requires identical atomic numbers in order, a cell
+within 1e-4 Å, and every atom within 1e-4 Å after minimum-image wrapping.
+Frame statuses are `mapped_unique`, `mapped_hop_unique`, `ambiguous` (candidates
+in more than one hop, so no hop is asserted), `unmapped`, and `error`.
+
+`index_id` covers the input identities, the mapping code and the tolerances.
+Changed inputs, code or tolerances make an index stale, and G0 then reverts to
+false. G0 also re-verifies every shard's SHA-256.
+
+Resume works per unit: per-file scans, the archive hash, and per-bucket mapping.
+Checkpoints are keyed by the Git SHA, so a new commit rebuilds the units in place.
+
+Safeguards. These keep `same_hop_exclusion_supported` false rather than
+guessing:
+
+- a hop directory containing files other than step, source, target or traj_init files;
+- an unparseable edge ID;
+- a duplicate archive member;
+- a flattened scan error;
+- an unreadable raw member (the whole material is marked `error`);
+- a material whose raw members exceed `audit.provenance_max_material_raw_bytes` (default 1 GiB, marked `error`).
+
+G0 re-hashes the indexed inputs (`audit.provenance_verify_input_sha256`) on every
+run. Content changes that preserve size and mtime therefore still invalidate the
+index.
