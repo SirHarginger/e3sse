@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "bash|powershell",
+        "bash": "python3 .agents/hooks/safety_guard.py",
+        "powershell": "python .agents/hooks/safety_guard.py",
+        "cwd": ".",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "project": {"name": "e3sse"},
+  "paths": {
+    "relative_to": ".",
+    "data_root": "/srv/ben/e3sse/data",
+    "outputs_root": "/srv/ben/e3sse/outputs",
+    "logs_root": "/srv/ben/e3sse/logs",
+    "scratch_root": "/srv/ben/e3sse/scratch"
+  },
+  "runtime": {"seed": 2026},
+  "audit": {"hash_max_bytes": 10485760}
+}
