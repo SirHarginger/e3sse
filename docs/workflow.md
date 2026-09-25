@@ -23,11 +23,12 @@ After pushing and merging the validated commit, run:
 ```bash
 cd /srv/ben/e3sse
 git status
-git pull
+git pull --ff-only
 git rev-parse HEAD
 PYTHONPATH=src python scripts/check_g0.py --config configs/server.json --resume
 ```
 
-The command reads `/srv/ben/e3sse/data/raw` and writes only below the
-configured `outputs_root`. Re-running with `--resume` reuses completed
+The command reads `/srv/ben/e3sse/data/raw` and, read-only,
+`/srv/ben/e3sse/data/downloads/MPLiTrj_raw.zip`, and writes only below the
+configured `outputs_root`. It requires `ase` in the environment. Re-running with `--resume` reuses completed
 per-dataset checkpoints only when their input fingerprint matches.

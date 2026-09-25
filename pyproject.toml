@@ -9,6 +9,7 @@ description = "Softening-Rescaled Transport and conformal screening of Li-ion so
 requires-python = ">=3.10"
 
 dependencies = [
+    "ase",
     "numpy",
     "pandas",
     "pyyaml"
@@ -30,3 +31,10 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 extend-exclude = [".agents"]
+
+[tool.ruff.lint.per-file-ignores]
+# The audit must isolate any per-file parser failure and report it, whatever its type.
+"src/e3sse/data/dataset_audit.py" = ["BLE001"]
+"src/e3sse/data/litraj_provenance.py" = ["BLE001"]
+# Pre-existing acquisition script, outside Gate G0 scope; not restyled here.
+"scripts/fetch_data.py" = ["BLE001", "C408", "UP024"]

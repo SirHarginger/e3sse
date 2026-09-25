@@ -1,5 +1,7 @@
 {
-  "project": {"name": "e3sse"},
+  "project": {
+    "name": "e3sse"
+  },
   "paths": {
     "relative_to": "..",
     "data_root": "data",
@@ -7,6 +9,15 @@
     "logs_root": "logs",
     "scratch_root": "scratch"
   },
-  "runtime": {"seed": 2026},
-  "audit": {"hash_max_bytes": 10485760}
+  "runtime": {
+    "seed": 2026
+  },
+  "audit": {
+    "hash_max_bytes": 10485760,
+    "example_limit": 10,
+    "mplitrj_raw_archive": "downloads/MPLiTrj_raw.zip",
+    "provenance_sample_materials": 2,
+    "provenance_inspect_hops": 3,
+    "optimade_line_limit": 200
+  }
 }

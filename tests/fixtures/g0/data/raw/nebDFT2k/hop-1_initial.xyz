@@ -1,4 +1,0 @@
-2
-Properties=species:S:1:pos:R:3 material_id=mat-1 structure_id=structure-1 hop_id=hop-1 neb_path_id=path-1 frame_id=initial split=train energy_unit=eV force_unit=eV/Angstrom
-Li 0.0 0.0 0.0
-O 1.0 0.0 0.0
