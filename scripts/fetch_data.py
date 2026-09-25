@@ -17,7 +17,14 @@ Usage
 Re-running is safe: completed files are skipped, partial files are resumed.
 Requires: Python >= 3.9, requests, tqdm
 """
-import argparse, datetime, hashlib, json, os, stat, sys, zipfile
+import argparse
+import datetime
+import hashlib
+import json
+import shutil
+import stat
+import sys
+import zipfile
 from pathlib import Path
 
 import requests
@@ -126,7 +133,8 @@ def download(url, dest: Path, total):
     part = dest.with_suffix(dest.suffix + ".part")
     have = part.stat().st_size if part.exists() else 0
     if total and have >= total:          # stale or oversized partial file: start over
-        part.unlink(); have = 0
+        part.unlink()
+        have = 0
     headers = dict(UA)
     if have:
         headers["Range"] = f"bytes={have}-"
@@ -242,7 +250,7 @@ def main():
                     kids = [k for k in tmp.iterdir() if not k.name.startswith("__MACOSX")]
                     if len(kids) == 1 and kids[0].is_dir():
                         kids[0].rename(target)
-                        import shutil; shutil.rmtree(tmp)
+                        shutil.rmtree(tmp)
                     else:
                         tmp.rename(target)
                 entry["files"] = sum(1 for p in target.rglob("*") if p.is_file())

@@ -2,6 +2,7 @@ project:
   name: e3sse
 
 paths:
+  relative_to: ..
   data_root: data
   outputs_root: outputs
   logs_root: logs

@@ -1,10 +1,10 @@
 # E3-SSE data acquisition
 
 ```bash
-pip install requests tqdm ase pandas numpy
-python fetch_data.py --dry-run --all    # sizes only
-python fetch_data.py --all              # everything (resumable; re-run if interrupted)
-python check_g0.py                      # data/G0_report.md
+pip install -e .
+python scripts/fetch_data.py --dry-run --all
+python scripts/fetch_data.py --all
+PYTHONPATH=src python scripts/check_g0.py --config configs/local.json --resume
 ```
 
 | Tier | Item | Size | Protocol role | Checksum |
@@ -31,6 +31,12 @@ accept the terms of use, download the CSV into `data/manual/`, then run
 
 **Layout:** `data/downloads/` (transient zips), `data/raw/` (read-only), `data/manual/` (hand-downloaded
 originals), `data/manifest.json` (URL, md5, SHA-256, UTC time, status for every item).
+
+Gate G0 writes canonical JSON and per-dataset resume checkpoints below
+`outputs/g0/<run-id>/`. It inventories observed schemas and retains nullable
+chemical-system, material, structure, hop, NEB-path, frame, and published-split
+identifiers. Missing or undocumented identifiers and units remain explicit
+unresolved issues; the audit never invents them.
 
 **Licences and citations:** LiTraj (Dembitskiy et al., npj Comput. Mater. 2025; structures from Materials
 Project, CC BY 4.0); FPMD archives CC BY 4.0 (Kahle et al., EES 2020, doi:10.24435/materialscloud:vg-ya;

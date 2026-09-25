@@ -2,6 +2,7 @@ project:
   name: e3sse
 
 paths:
+  relative_to: .
   data_root: /srv/ben/e3sse/data
   outputs_root: /srv/ben/e3sse/outputs
   logs_root: /srv/ben/e3sse/logs
