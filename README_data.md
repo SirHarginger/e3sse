@@ -47,6 +47,17 @@ read-only to test, on a bounded sample, whether flattened frames map back to hop
 index exists. Large diagnostics keep exact counts with bounded examples. The audit
 never invents identifiers or values.
 
+FPMD AiiDA queries run in a separate pinned Python 3.12 environment. The
+inventory command opens modern archives through AiiDA's read-only
+`core.sqlite_zip` backend; an incompatible legacy archive is migrated only to
+a derived copy below configured scratch. Gate G0 validates the inventory
+schema, self-digest, Git/code and dependency-lock identity, policy, exact
+archive set and full source-archive SHA-256 values before accepting any
+structure, trajectory, temperature, diffusion, MSD or provenance capability.
+Legacy and 2026-family results remain separate: 2026 extension failures are
+reported, while the gate is based on the configured required legacy PBE archive
+and their demonstrated scientific capabilities.
+
 **Licences and citations:** LiTraj (Dembitskiy et al., npj Comput. Mater. 2025; structures from Materials
 Project, CC BY 4.0); FPMD archives CC BY 4.0 (Kahle et al., EES 2020, doi:10.24435/materialscloud:vg-ya;
 Thakur et al., EES 2026, doi:10.24435/materialscloud:xm-46); OBELiX (Therrien et al., Digital Discovery 2026;

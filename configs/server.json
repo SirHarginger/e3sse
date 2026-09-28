@@ -20,5 +20,29 @@
     "provenance_inspect_hops": 3,
     "optimade_line_limit": 200,
     "workers": 8
+  },
+  "fpmd_aiida": {
+    "inventory_path": "fpmd_aiida/current.json",
+    "profile_root": "fpmd_aiida/profiles",
+    "migration_root": "fpmd_aiida/migrated",
+    "requirements_lock": "requirements/aiida-archive.lock",
+    "python_version": "3.12",
+    "aiida_version": "2.9.2",
+    "example_limit": 10,
+    "allow_derived_migration": true,
+    "required_archives": [
+      {"name": "FPMD_screening.aiida", "family": "legacy", "required": true},
+      {"name": "FPMD2026_screening_Li7NbO6.aiida", "family": "2026", "required": false},
+      {"name": "FPMD2026_structures.aiida", "family": "2026", "required": false},
+      {"name": "FPMD2026_trajectories.aiida", "family": "2026", "required": false}
+    ],
+    "required_capabilities": [
+      "diffusion_reference_recoverable",
+      "msd_reference_recoverable",
+      "provenance_linkage_recoverable",
+      "structures_recoverable",
+      "temperature_metadata_recoverable",
+      "trajectories_recoverable"
+    ]
   }
 }

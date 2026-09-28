@@ -75,6 +75,26 @@ in more than one hop, so no hop is asserted), `unmapped`, and `error`.
 Changed inputs, code or tolerances make an index stale, and G0 then reverts to
 false. G0 also re-verifies every shard's SHA-256.
 
+## Isolated FPMD AiiDA inventory
+
+AiiDA is intentionally absent from the ordinary G0 environment. Create a
+dedicated, locked Python 3.12 environment and query the archives first:
+
+```bash
+uv venv --python 3.12 ~/.venvs/e3sse-aiida
+uv pip sync --python ~/.venvs/e3sse-aiida/bin/python requirements/aiida-archive.lock
+source ~/.venvs/e3sse-aiida/bin/activate
+PYTHONPATH=src python scripts/audit_fpmd_aiida.py --config configs/server.json --resume
+deactivate
+```
+
+The command confines `AIIDA_PATH` to the configured scratch root and opens
+each source archive read-only. If the legacy schema cannot be opened directly,
+only a provenance-recorded migrated copy below scratch is queried. It never
+imports into or modifies a user AiiDA profile. The inventory is written below
+`outputs/fpmd_aiida/`; ordinary G0 independently re-hashes every configured
+source archive before consuming it.
+
 Resume works per unit: per-file scans, the archive hash, and per-bucket mapping.
 Checkpoints are keyed by the Git SHA, so a new commit rebuilds the units in place.
 

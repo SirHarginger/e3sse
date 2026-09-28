@@ -11,7 +11,6 @@ from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 from ase.io import read, write
 
-from e3sse.data import dataset_audit
 from e3sse.data.dataset_audit import (
     DATASETS,
     audit_dataset,
@@ -22,6 +21,7 @@ from e3sse.data.dataset_audit import (
     run_audit,
     split_from_filename,
 )
+from e3sse.data.fpmd_aiida_inventory import DEFAULT_REQUIRED_CAPABILITIES
 
 FIXTURE_DATA = Path(__file__).parent / "fixtures" / "g0" / "data"
 EDGE = "mp-1_0_1_1_0_0"
@@ -127,9 +127,10 @@ def test_full_audit_role_statuses_and_linkage(tmp_path):
         f"same_hop_exclusion_supported: {by_name['MPLiTrj']['capabilities']['same_hop_exclusion_supported']['detail']}"
     ]
     assert by_name["FPMD"]["status"] == "partial"
-    assert by_name["FPMD"]["blockers"] == [
-        "aiida_query_available: AiiDA query capability unavailable in current environment"
-    ]
+    assert {item.split(":", 1)[0] for item in by_name["FPMD"]["blockers"]} == {
+        "aiida_query_available",
+        *DEFAULT_REQUIRED_CAPABILITIES,
+    }
     assert report["status"] == "partial"
     linkage = report["linkage_summary"]["nebDFT2k_to_MPLiTrj"]
     assert linkage["material"]["intersection_count"] == 1
@@ -394,20 +395,43 @@ def test_not_applicable_dimensions_are_never_missing():
     assert not any("identifier" in blocker for blocker in fpmd["blockers"])
 
 
-def test_fpmd_status_depends_only_on_transport_capabilities(tmp_path, monkeypatch):
+def test_fpmd_status_depends_on_validated_scientific_inventory(tmp_path):
     data = _data_tree(tmp_path)
     files = discover_datasets(data / "raw")["FPMD"]
+    valid = {
+        "status": "valid",
+        "inventory_id": "inventory-1",
+        "capabilities": {
+            "aiida_query_available": True,
+            **{name: True for name in DEFAULT_REQUIRED_CAPABILITIES},
+        },
+    }
 
     unavailable = audit_dataset("FPMD", files, [])
-    monkeypatch.setattr(dataset_audit, "aiida_query_available", lambda: True)
-    available = audit_dataset("FPMD", files, [])
+    available = audit_dataset("FPMD", files, [], fpmd_inventory_state=valid)
+    missing_temperature = {
+        **valid,
+        "capabilities": {
+            **valid["capabilities"],
+            "temperature_metadata_recoverable": False,
+        },
+    }
+    partial = audit_dataset(
+        "FPMD", files, [], fpmd_inventory_state=missing_temperature
+    )
 
     assert unavailable["status"] == "partial"
-    assert unavailable["blockers"] == [
-        "aiida_query_available: AiiDA query capability unavailable in current environment"
-    ]
+    assert {item.split(":", 1)[0] for item in unavailable["blockers"]} == {
+        "aiida_query_available",
+        *DEFAULT_REQUIRED_CAPABILITIES,
+    }
     caps = available["capabilities"]
     assert available["status"] == "pass"
+    assert partial["status"] == "partial"
+    assert any(
+        item.startswith("temperature_metadata_recoverable:")
+        for item in partial["blockers"]
+    )
     for name in (
         "archive_present",
         "archive_container_readable",
@@ -415,6 +439,8 @@ def test_fpmd_status_depends_only_on_transport_capabilities(tmp_path, monkeypatc
         "trajectory_archive_present",
         "diffusion_reference_documented",
         "msd_reference_documented",
+        "aiida_query_available",
+        *DEFAULT_REQUIRED_CAPABILITIES,
     ):
         assert caps[name]["available"], name
     aiida = next(s for s in available["schema_summary"] if s["format"] == "aiida")

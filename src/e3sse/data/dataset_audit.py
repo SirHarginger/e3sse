@@ -14,14 +14,12 @@ from __future__ import annotations
 import csv
 import gzip
 import hashlib
-import importlib.util
 import json
 import math
 import multiprocessing
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -43,7 +41,7 @@ from ase import Atoms
 from ase.io import iread
 
 from e3sse.config import load_config
-from e3sse.data import litraj_provenance, mplitrj_provenance
+from e3sse.data import fpmd_aiida_inventory, litraj_provenance, mplitrj_provenance
 from e3sse.data.litraj_provenance import BoundedExamples, FrameGeometry
 
 SCHEMA_VERSION = "e3sse.g0.audit.v2"
@@ -218,17 +216,11 @@ def _safe_output_root(config: dict[str, Any]) -> Path:
     raise ValueError("Audit output root must not be inside immutable raw data")
 
 
-def aiida_query_available() -> bool:
-    """AiiDA archives can only be queried with aiida-core importable."""
-
-    return importlib.util.find_spec("aiida") is not None
-
-
-def _environment_capabilities() -> dict[str, Any]:
+def _environment_capabilities(inventory_state: dict[str, Any]) -> dict[str, Any]:
     return {
         "ase_version": ase.__version__,
-        "aiida_core_importable": aiida_query_available(),
-        "verdi_executable": shutil.which("verdi") is not None,
+        "fpmd_aiida_inventory_status": inventory_state["status"],
+        "fpmd_aiida_inventory_id": inventory_state.get("inventory_id"),
     }
 
 
@@ -1478,7 +1470,11 @@ def inspect_aiida_archive(path: Path, *, example_limit: int) -> dict[str, Any]:
     return record
 
 
-def _audit_fpmd(files: list[Path], settings: dict[str, Any]) -> dict[str, Any]:
+def _audit_fpmd(
+    files: list[Path],
+    settings: dict[str, Any],
+    inventory_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     limit = settings["example_limit"]
     errors: list[str] = []
     schemas: list[dict[str, Any]] = []
@@ -1510,7 +1506,17 @@ def _audit_fpmd(files: list[Path], settings: dict[str, Any]) -> dict[str, Any]:
     docs_present = any(
         item.get("format") == "text" for item in schemas
     )
-    aiida_available = aiida_query_available()
+    inventory_state = inventory_state or {
+        "status": "missing",
+        "reason": "validated FPMD AiiDA inventory was not supplied",
+    }
+    inventory_valid = inventory_state["status"] == "valid"
+    inventory_capabilities = inventory_state.get("capabilities", {})
+    inventory_detail = (
+        f"validated inventory {inventory_state.get('inventory_id')}"
+        if inventory_valid
+        else inventory_state.get("reason", "FPMD AiiDA inventory is invalid")
+    )
     capabilities = {
         "archive_present": _capability(REQUIRED, bool(archives), f"{len(archives)} .aiida archives"),
         "archive_container_readable": _capability(
@@ -1538,16 +1544,29 @@ def _audit_fpmd(files: list[Path], settings: dict[str, Any]) -> dict[str, Any]:
             "bounded streaming read of OPTIMADE JSONL",
         ),
         "aiida_query_available": _capability(
-            REQUIRED, aiida_available,
-            "AiiDA query capability available" if aiida_available
-            else "AiiDA query capability unavailable in current environment",
+            REQUIRED,
+            inventory_valid and inventory_capabilities.get("aiida_query_available", False),
+            inventory_detail,
+            value_source="validated external AiiDA inventory",
         ),
     }
+    for name in fpmd_aiida_inventory.DEFAULT_REQUIRED_CAPABILITIES:
+        capabilities[name] = _capability(
+            REQUIRED,
+            inventory_valid and inventory_capabilities.get(name, False),
+            inventory_detail
+            if inventory_capabilities.get(name, False)
+            else f"{name} not demonstrated by a valid FPMD AiiDA inventory",
+            value_source="validated external AiiDA inventory",
+        )
     return {
         "trackers": _trackers("FPMD", limit, ()),
         "capabilities": capabilities,
         "schemas": schemas,
-        "summary": {"documentation_keywords": sorted(doc_keywords)},
+        "summary": {
+            "documentation_keywords": sorted(doc_keywords),
+            "aiida_inventory": inventory_state,
+        },
         "frames": 0,
         "csv_rows": 0,
         "splits": {},
@@ -1677,6 +1696,7 @@ def audit_dataset(
     settings: dict[str, Any] | None = None,
     raw_archive: Path | None = None,
     index_state: dict[str, Any] | None = None,
+    fpmd_inventory_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Audit one dataset against its role requirements without modifying sources."""
 
@@ -1687,7 +1707,7 @@ def audit_dataset(
     elif dataset == "MPLiTrj":
         result = _audit_mplitrj(files, settings, raw_archive, index_state)
     elif dataset == "FPMD":
-        result = _audit_fpmd(files, settings)
+        result = _audit_fpmd(files, settings, fpmd_inventory_state)
     else:
         result = _audit_indexed_pool(dataset, files, settings)
     return _dataset_report(dataset, files, identities, settings, result, started)
@@ -1766,6 +1786,7 @@ def _implementation_record() -> dict[str, str]:
     paths = {
         "dataset_audit": Path(__file__).resolve(),
         "litraj_provenance": Path(litraj_provenance.__file__).resolve(),
+        "fpmd_aiida_inventory": Path(fpmd_aiida_inventory.__file__).resolve(),
         "config_loader": Path(load_config.__code__.co_filename).resolve(),
     }
     return {name: _sha256(path) for name, path in paths.items()}
@@ -1857,6 +1878,7 @@ def _execute_unit(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
             [Path(path) for path in payload["files"]],
             payload["identities"],
             settings=payload["settings"],
+            fpmd_inventory_state=payload.get("fpmd_inventory_state"),
         )
     elif kind == "mplitrj_file":
         result = _mplitrj_file_unit(payload["path"], payload["settings"], payload["sample_materials"])
@@ -2102,7 +2124,10 @@ def run_audit(
     )
     configuration = _configuration_record(config)
     implementation = _implementation_record()
-    environment = _environment_capabilities()
+    fpmd_inventory_state = fpmd_aiida_inventory.evaluate_inventory(
+        config, discovered["FPMD"]
+    )
+    environment = _environment_capabilities(fpmd_inventory_state)
     git_sha = _git("rev-parse", "HEAD")
     # The worker count is operational, so it is excluded: serial and parallel
     # runs share run IDs and checkpoints.
@@ -2114,6 +2139,7 @@ def run_audit(
         "environment": environment,
         "inputs": identities,
         "raw_archive": archive_identity,
+        "fpmd_aiida_inventory": fpmd_inventory_state,
     }
     run_id = _fingerprint(run_inputs)[:16]
     run_root = output_root / "g0" / run_id
@@ -2181,9 +2207,18 @@ def run_audit(
                 "files": [str(path) for path in discovered[name]],
                 "identities": identities[name],
                 "settings": science,
+                "fpmd_inventory_state": (
+                    fpmd_inventory_state if name == "FPMD" else None
+                ),
             },
             checkpoint=run_root / "datasets" / f"{name}.json",
-            fingerprint=fingerprint(name, inputs=identities[name]),
+            fingerprint=fingerprint(
+                name,
+                inputs=identities[name],
+                fpmd_aiida_inventory=(
+                    fpmd_inventory_state if name == "FPMD" else None
+                ),
+            ),
         )
         for name in DATASETS
         if name != "MPLiTrj"
