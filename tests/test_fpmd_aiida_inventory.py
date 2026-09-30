@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from e3sse.data import fpmd_aiida_inventory as inventory
@@ -166,22 +167,22 @@ def test_each_scientific_capability_is_independent(missing):
     assert all(result[name] for name in CAPABILITIES if name != missing)
 
 
-def test_observed_groups_counts_and_links_drive_capabilities():
+def test_observed_evidence_drives_reference_capabilities():
     absent = inventory._reference_capabilities(
         structure_count=0,
         trajectory_count=0,
-        distinct_temperature_count=0,
-        diffusion_groups=[],
-        msd_groups=[],
+        temperature_recoverable=False,
+        diffusion_recoverable=False,
+        msd_recoverable=False,
         direct_links=0,
         process_links=0,
     )
     present = inventory._reference_capabilities(
         structure_count=2,
         trajectory_count=3,
-        distinct_temperature_count=2,
-        diffusion_groups=[{"label": "diffusion_coefficients"}],
-        msd_groups=[{"label": "msd"}],
+        temperature_recoverable=True,
+        diffusion_recoverable=True,
+        msd_recoverable=True,
         direct_links=1,
         process_links=0,
     )
@@ -190,29 +191,217 @@ def test_observed_groups_counts_and_links_drive_capabilities():
     assert all(present.values())
 
 
-def test_temperature_metadata_is_exact_bounded_and_deterministic():
-    observations = inventory._temperature_values(
+def test_temperature_array_with_explicit_unit_is_recoverable_and_deterministic():
+    values = np.array([900.0, 300.0, 600.0])
+
+    first = inventory.validate_temperature_array(values, "K", example_limit=2)
+    second = inventory.validate_temperature_array(values[::-1], "kelvin", example_limit=2)
+
+    assert first["recoverable"] and second["recoverable"]
+    assert first["min_K"] == second["min_K"] == 300.0
+    assert first["max_K"] == second["max_K"] == 900.0
+    assert first["representative_K"] == second["representative_K"] == [300.0, 900.0]
+
+
+def test_nonfinite_temperature_is_not_recoverable():
+    result = inventory.validate_temperature_array(
+        np.array([300.0, np.nan]), "K", example_limit=2
+    )
+
+    assert result["status"] == "invalid"
+    assert not result["recoverable"]
+    assert "non-finite" in result["errors"][0]
+
+
+def test_temperature_without_unit_is_not_recoverable():
+    result = inventory.validate_temperature_array(
+        np.array([300.0, 600.0]), None, example_limit=2
+    )
+
+    assert result["status"] == "unit_unresolved"
+    assert not result["recoverable"]
+
+
+def test_invalid_temperature_takes_precedence_over_unresolved_unit():
+    unresolved = {
+        "uuid": "a",
+        **inventory.validate_temperature_array(
+            np.array([300.0]), None, example_limit=2
+        ),
+    }
+    invalid = {
+        "uuid": "b",
+        **inventory.validate_temperature_array(
+            np.array([np.nan]), "K", example_limit=2
+        ),
+    }
+
+    result = inventory._aggregate_temperature_records(
+        [unresolved, invalid], candidate_count=2, example_limit=2
+    )
+
+    assert result["status"] == "invalid"
+
+
+def test_diffusion_cm2_s_scalar_is_unit_bearing_reference():
+    result = inventory.validate_diffusion_attributes(
+        {"Li": {"diffusion_mean_cm2_s": 1.2e-7}}, example_limit=3
+    )
+
+    assert result["recoverable"]
+    assert result["valid_mean_count"] == 1
+    assert result["unit_convention"]["cm2_s"] == "cm^2/s"
+
+
+def test_matching_diffusion_si_and_cm2_s_pair_is_recoverable():
+    result = inventory.validate_diffusion_attributes(
         {
-            "temperature": 700,
-            "temperature_unit": "K",
-            "nested": {"temp_k": 500},
-            "bad": {"temperature": "unknown"},
-            "temperature_enabled": True,
+            "Li": {
+                "diffusion_mean_SI": 1.2e-11,
+                "diffusion_mean_cm2_s": 1.2e-7,
+            }
+        },
+        example_limit=3,
+    )
+
+    assert result["recoverable"]
+    assert not result["errors"]
+
+
+def test_inconsistent_diffusion_si_and_cm2_s_pair_is_invalid():
+    result = inventory.validate_diffusion_attributes(
+        {
+            "Li": {
+                "diffusion_mean_SI": 1.2e-11,
+                "diffusion_mean_cm2_s": 9.9e-7,
+            }
+        },
+        example_limit=3,
+    )
+
+    assert result["status"] == "invalid"
+    assert not result["recoverable"]
+    assert "inconsistent" in result["errors"][0]
+
+
+def test_diffusion_uncertainty_without_mean_is_invalid_not_missing():
+    result = inventory._aggregate_diffusion_records(
+        [{"Li": {"diffusion_sem_cm2_s": 1.0e-8}}], example_limit=3
+    )
+
+    assert result["status"] == "invalid"
+    assert not result["recoverable"]
+    assert "no valid mean" in result["errors"][0]
+
+
+def test_msd_array_with_explicit_unit_provenance_is_recoverable():
+    result = inventory.validate_msd_arrays(
+        {"msd_isotropic_Li_mean": np.array([0.0, 0.2, 0.5])},
+        {"units|msd_isotropic_Li_mean": "angstrom^2"},
+        example_limit=3,
+    )
+
+    assert result["status"] == "recoverable"
+    assert result["recoverable"]
+    assert result["valid_arrays"]["examples"][0]["unit_source"] == (
+        "units|msd_isotropic_Li_mean"
+    )
+
+
+def test_numeric_msd_without_unit_is_explicitly_unresolved():
+    result = inventory.validate_msd_arrays(
+        {"msd": np.array([0.0, 0.2, 0.5])}, {}, example_limit=3
+    )
+
+    assert result["status"] == "unit_unresolved"
+    assert result["numeric_arrays_recoverable"]
+    assert not result["recoverable"]
+    assert result["unresolved_unit_arrays"]["examples"] == ["msd"]
+
+
+def test_msd_aggregate_cannot_hide_later_unresolved_unit_metadata():
+    valid = inventory.validate_msd_arrays(
+        {"msd": np.array([0.0, 0.2])},
+        {"units|msd": "angstrom^2"},
+        example_limit=1,
+    )
+    valid["payload_arrays_inspected"] = 1
+    unresolved = inventory.validate_msd_arrays({}, {}, example_limit=1)
+    unresolved.update(
+        {
+            "status": "unit_unresolved",
+            "recognized_array_count": 1,
+            "payload_arrays_inspected": 0,
+            "unresolved_unit_arrays": {
+                "count": 1,
+                "examples": ["msd_isotropic_Li_0"],
+                "truncated": False,
+                "scope": "MSD arrays lacking explicit unit provenance",
+            },
         }
     )
-    values = [
-        {"value": item["value"], "unit": item.get("unit")}
-        for item in observations
+
+    result = inventory._aggregate_msd_records([valid, unresolved], example_limit=1)
+
+    assert result["status"] == "unit_unresolved"
+    assert not result["recoverable"]
+    assert result["candidate_array_count"] == 2
+    assert result["payload_arrays_uninspected"] == 1
+
+
+def test_required_legacy_alone_satisfies_transport_reference_capabilities():
+    settings = {
+        "required_archives": [
+            {"name": "FPMD_screening.aiida", "family": "legacy", "required": True}
+        ],
+        "required_capabilities": list(CAPABILITIES),
+    }
+    rows = [_result("FPMD_screening.aiida", "legacy", True)]
+
+    result = inventory.aggregate_capabilities(rows, settings)
+
+    assert result["temperature_metadata_recoverable"]
+    assert result["diffusion_reference_recoverable"]
+    assert result["msd_reference_recoverable"]
+
+
+def test_optional_role_specific_archives_do_not_negate_required_legacy_evidence():
+    rows = [
+        _result("FPMD_screening.aiida", "legacy", True),
+        _result("FPMD2026_a.aiida", "2026", False, capabilities=set()),
+        _result("FPMD2026_b.aiida", "2026", False, capabilities=set()),
     ]
-    assert {item["unit"] for item in values} == {"K"}
 
-    first = inventory._bounded(values, 1, "test")
-    second = inventory._bounded(reversed(values), 1, "test")
-    assert first == second
-    assert first["count"] == 2
-    assert len(first["examples"]) == 1
-    assert {item["value"] for item in values} == {500, 700}
+    result = inventory.aggregate_capabilities(rows, _settings())
 
+    assert result["temperature_metadata_recoverable"]
+    assert result["diffusion_reference_recoverable"]
+    assert result["msd_reference_recoverable"]
+
+
+
+def test_optional_only_transport_evidence_does_not_rescue_required_legacy():
+    transport = {
+        "temperature_metadata_recoverable",
+        "diffusion_reference_recoverable",
+        "msd_reference_recoverable",
+    }
+    rows = [
+        _result(
+            "FPMD_screening.aiida",
+            "legacy",
+            True,
+            capabilities=set(CAPABILITIES) - transport,
+        ),
+        _result("FPMD2026_a.aiida", "2026", False),
+        _result("FPMD2026_b.aiida", "2026", False),
+    ]
+
+    result = inventory.aggregate_capabilities(rows, _settings())
+
+    assert not result["temperature_metadata_recoverable"]
+    assert not result["diffusion_reference_recoverable"]
+    assert not result["msd_reference_recoverable"]
 
 def test_build_resume_staleness_tamper_and_raw_immutability(tmp_path, monkeypatch):
     config_path, archives = _config(tmp_path)
@@ -334,7 +523,7 @@ def test_real_aiida_read_only_archive_smoke(tmp_path, monkeypatch):
     np = pytest.importorskip("numpy")
     from aiida.manage import get_manager
     from aiida.manage.configuration import Profile
-    from aiida.orm import Dict, Group, StructureData, TrajectoryData, User
+    from aiida.orm import ArrayData, Dict, Group, StructureData, TrajectoryData, User
     from aiida.storage.sqlite_dos.backend import SqliteDosStorage
     from aiida.tools.archive import create_archive
 
@@ -365,14 +554,15 @@ def test_real_aiida_read_only_archive_smoke(tmp_path, monkeypatch):
         times=np.array([0.0, 1.0]),
         pbc=[True, True, True],
     )
-    trajectory.base.extras.set_many(
-        {"temperature": 500.0, "temperature_unit": "K", "material_id": "smoke"}
-    )
+    trajectory.set_array("temperatures", np.array([500.0, 500.0]))
+    trajectory.base.attributes.set("units|temperatures", "K")
+    trajectory.base.extras.set("material_id", "smoke")
     trajectory.store()
-    diffusion = Dict(
-        {"diffusion_coefficient": 1.0e-7, "diffusion_coefficient_unit": "cm^2/s"}
-    ).store()
-    msd = Dict({"msd": [0.0, 0.1], "msd_unit": "angstrom^2"}).store()
+    diffusion = Dict({"Li": {"diffusion_mean_cm2_s": 1.0e-7}}).store()
+    msd = ArrayData()
+    msd.set_array("msd", np.array([0.0, 0.1]))
+    msd.base.attributes.set("units|msd", "angstrom^2")
+    msd.store()
     groups = [
         Group(label=label).store()
         for label in (
@@ -391,7 +581,8 @@ def test_real_aiida_read_only_archive_smoke(tmp_path, monkeypatch):
 
     assert result["structure_count"] == 1
     assert result["trajectory_count"] == 1
-    assert result["temperature_metadata"]["distinct_temperature_count"] == 1
+    assert result["temperature_metadata"]["recoverable"]
+    assert result["temperature_metadata"]["value_count"] == 2
     assert result["capabilities"]["diffusion_reference_recoverable"]
     assert result["capabilities"]["msd_reference_recoverable"]
 

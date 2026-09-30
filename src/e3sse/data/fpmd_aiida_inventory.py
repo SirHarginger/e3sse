@@ -13,6 +13,7 @@ import sys
 from collections import Counter
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
+from numbers import Real
 from pathlib import Path
 from typing import Any
 
@@ -184,118 +185,397 @@ def _bounded(values: Iterable[Any], limit: int, provenance: str) -> dict[str, An
     }
 
 
-def _temperature_values(value: Any, prefix: str = "") -> list[dict[str, Any]]:
-    """Return only finite numeric temperatures with explicit kelvin evidence."""
+MAX_TEMPERATURE_K = 10_000.0
+DIFFUSION_PAIR_RTOL = 1.0e-6
+DIFFUSION_PAIR_ATOL = 1.0e-30
+_DIFFUSION_FIELD = re.compile(
+    r"^(?P<prefix>.+\.diffusion_(?P<stat>mean|sem|std))_(?P<unit>SI|cm2_s)$",
+    flags=re.IGNORECASE,
+)
+_MSD_ARRAY = re.compile(
+    r"^msd(?:_isotropic_[A-Za-z0-9]+_(?:\d+|mean|sem|std))?$",
+    flags=re.IGNORECASE,
+)
 
-    found: list[dict[str, Any]] = []
+
+def _representative_values(values: Iterable[float], limit: int) -> list[float]:
+    ordered = sorted({float(value) for value in values})
+    if len(ordered) <= limit:
+        return ordered
+    if limit == 1:
+        return [ordered[0]]
+    indices = [round(index * (len(ordered) - 1) / (limit - 1)) for index in range(limit)]
+    return [ordered[index] for index in indices]
+
+
+def validate_temperature_array(
+    values: Any, declared_unit: Any, *, example_limit: int
+) -> dict[str, Any]:
+    """Validate one stored temperature array without inspecting trajectory coordinates."""
+
+    import numpy as np
+
+    array = np.asarray(values)
+    errors: list[str] = []
+    if (
+        array.size == 0
+        or not np.issubdtype(array.dtype, np.number)
+        or np.issubdtype(array.dtype, np.bool_)
+        or np.issubdtype(array.dtype, np.complexfloating)
+    ):
+        errors.append("temperatures array must be non-empty, real and numeric")
+        numeric = np.asarray([], dtype=float)
+    else:
+        numeric = array.astype(float, copy=False).reshape(-1)
+        if not np.all(np.isfinite(numeric)):
+            errors.append("temperatures array contains non-finite values")
+
+    unit_key = declared_unit.strip().lower() if isinstance(declared_unit, str) else None
+    conversions: dict[str, float] = {
+        "k": 0.0,
+        "kelvin": 0.0,
+        "kelvins": 0.0,
+        "c": 273.15,
+        "°c": 273.15,
+        "degc": 273.15,
+        "celsius": 273.15,
+    }
+    if unit_key not in conversions:
+        status = "unit_unresolved" if not errors else "invalid"
+        errors.append("temperature unit is missing or unrecognized")
+        values_k = np.asarray([], dtype=float)
+    else:
+        values_k = numeric + conversions[unit_key]
+        if values_k.size and (
+            np.any(values_k <= 0.0) or np.any(values_k > MAX_TEMPERATURE_K)
+        ):
+            errors.append(
+                f"temperature values must satisfy 0 < T <= {MAX_TEMPERATURE_K:g} K"
+            )
+        status = "recoverable" if not errors else "invalid"
+
+    return {
+        "status": status,
+        "recoverable": status == "recoverable",
+        "declared_unit": declared_unit,
+        "canonical_unit": "K" if unit_key in conversions else None,
+        "dtype": str(array.dtype),
+        "value_count": int(array.size),
+        "min_K": float(np.min(values_k)) if values_k.size and not errors else None,
+        "max_K": float(np.max(values_k)) if values_k.size and not errors else None,
+        "representative_K": (
+            _representative_values(values_k.tolist(), example_limit)
+            if values_k.size and not errors
+            else []
+        ),
+        "errors": errors,
+    }
+
+
+
+def _aggregate_temperature_records(
+    records: list[dict[str, Any]], candidate_count: int, example_limit: int
+) -> dict[str, Any]:
+    valid = [record for record in records if record["recoverable"]]
+    invalid = [record for record in records if not record["recoverable"]]
+    representative = [
+        value for record in valid for value in record["representative_K"]
+    ]
+    recoverable = bool(valid) and not invalid
+    if recoverable:
+        status = "recoverable"
+    elif any(record["status"] == "invalid" for record in invalid):
+        status = "invalid"
+    elif any(record["status"] == "unit_unresolved" for record in invalid):
+        status = "unit_unresolved"
+    else:
+        status = "missing"
+    return {
+        "status": status,
+        "recoverable": recoverable,
+        "candidate_trajectory_count": candidate_count,
+        "sampled_trajectory_count": len(records),
+        "valid_trajectory_count": len(valid),
+        "validation_scope": "bounded deterministic UUID-ordered sample",
+        "value_count": sum(record["value_count"] for record in valid),
+        "min_K": min((record["min_K"] for record in valid), default=None),
+        "max_K": max((record["max_K"] for record in valid), default=None),
+        "representative_K": _representative_values(representative, example_limit),
+        "samples": records[:example_limit],
+        "errors": [
+            f"{record['uuid']}: {error}"
+            for record in invalid
+            for error in record["errors"]
+        ][:example_limit],
+    }
+
+def _flatten_values(value: Any, prefix: str = "") -> dict[str, Any]:
+    flattened: dict[str, Any] = {}
     if isinstance(value, dict):
         for key, child in value.items():
             path = f"{prefix}.{key}" if prefix else str(key)
-            if re.search(r"(^|[_.])(temperature|temp)([_.]|$)", path.lower()):
-                unit = None
-                for unit_key in (f"{key}_unit", "temperature_unit", "temp_unit", "units"):
-                    candidate = value.get(unit_key)
-                    if isinstance(candidate, str) and candidate.lower() in {
-                        "k",
-                        "kelvin",
-                        "kelvins",
-                    }:
-                        unit = "K"
-                        break
-                numeric_value = None
-                if isinstance(child, (int, float)) and not isinstance(child, bool):
-                    if math.isfinite(float(child)) and (
-                        unit == "K" or str(key).lower().endswith("_k")
-                    ):
-                        numeric_value = float(child)
-                        unit = "K"
-                elif isinstance(child, str):
-                    match = re.fullmatch(
-                        r"\s*([+-]?\d+(?:\.\d+)?)\s*(?:k|kelvin|kelvins)\s*",
-                        child,
-                        flags=re.IGNORECASE,
-                    )
-                    if match and math.isfinite(float(match.group(1))):
-                        numeric_value = float(match.group(1))
-                        unit = "K"
-                if numeric_value is not None:
-                    found.append(
-                        {
-                            "field": path,
-                            "value": numeric_value,
-                            "unit": unit,
-                            "source": "node metadata",
-                        }
-                    )
-            found.extend(_temperature_values(child, path))
-    elif isinstance(value, list):
-        for index, child in enumerate(value[:20]):
-            found.extend(_temperature_values(child, f"{prefix}[{index}]"))
-    return found
+            flattened.update(_flatten_values(child, path))
+    else:
+        flattened[prefix] = value
+    return flattened
+
+
+def validate_diffusion_attributes(
+    attributes: dict[str, Any], *, example_limit: int
+) -> dict[str, Any]:
+    """Validate stored diffusion scalars whose names explicitly encode their units."""
+
+    fields: dict[tuple[str, str], dict[str, Any]] = {}
+    errors: list[str] = []
+    recognized_count = 0
+    for path, value in sorted(_flatten_values(attributes).items()):
+        match = _DIFFUSION_FIELD.fullmatch(path)
+        if not match:
+            continue
+        recognized_count += 1
+        if not isinstance(value, Real) or isinstance(value, bool):
+            errors.append(f"{path}: diffusion value is not a real scalar")
+            continue
+        number = float(value)
+        if not math.isfinite(number) or number < 0.0:
+            errors.append(f"{path}: diffusion value must be finite and non-negative")
+            continue
+        key = (match.group("prefix").lower(), match.group("stat").lower())
+        fields.setdefault(key, {})[match.group("unit").lower()] = {
+            "field": path,
+            "value": number,
+        }
+
+    valid_fields: list[dict[str, Any]] = []
+    valid_mean_count = 0
+    for (prefix, stat), representations in sorted(fields.items()):
+        valid_fields.extend(representations.values())
+        if stat == "mean":
+            valid_mean_count += 1
+        if "si" in representations and "cm2_s" in representations:
+            expected_cm2_s = representations["si"]["value"] * 1.0e4
+            observed_cm2_s = representations["cm2_s"]["value"]
+            if not math.isclose(
+                observed_cm2_s,
+                expected_cm2_s,
+                rel_tol=DIFFUSION_PAIR_RTOL,
+                abs_tol=DIFFUSION_PAIR_ATOL,
+            ):
+                errors.append(
+                    f"{prefix}: inconsistent SI/cm2_s pair "
+                    f"({observed_cm2_s} != {expected_cm2_s})"
+                )
+
+    if valid_mean_count and not errors:
+        status = "recoverable"
+    elif recognized_count:
+        status = "invalid"
+        if not valid_mean_count:
+            errors.append("recognized diffusion fields contain no valid mean")
+    else:
+        status = "missing"
+    return {
+        "status": status,
+        "recoverable": status == "recoverable",
+        "recognized_field_count": recognized_count,
+        "valid_mean_count": valid_mean_count,
+        "unit_convention": {"SI": "m^2/s", "cm2_s": "cm^2/s"},
+        "conversion": "cm^2/s = (m^2/s) * 1e4",
+        "fields": _bounded(valid_fields, example_limit, "stored AiiDA node attributes"),
+        "errors": errors[:example_limit],
+    }
+
+
+def _aggregate_diffusion_records(
+    records: list[dict[str, Any]], example_limit: int
+) -> dict[str, Any]:
+    evidence = [
+        validate_diffusion_attributes(record, example_limit=example_limit)
+        for record in records
+    ]
+    errors = [error for item in evidence for error in item["errors"]]
+    valid_mean_count = sum(item["valid_mean_count"] for item in evidence)
+    recognized_count = sum(item["recognized_field_count"] for item in evidence)
+    invalid = any(item["status"] == "invalid" for item in evidence)
+    recoverable = valid_mean_count > 0 and not invalid
+    return {
+        "status": "recoverable" if recoverable else ("invalid" if invalid else "missing"),
+        "recoverable": recoverable,
+        "records_inspected": len(records),
+        "recognized_field_count": recognized_count,
+        "valid_mean_count": valid_mean_count,
+        "unit_convention": {"SI": "m^2/s", "cm2_s": "cm^2/s"},
+        "conversion": "cm^2/s = (m^2/s) * 1e4",
+        "errors": errors[:example_limit],
+    }
+
+
+def _msd_unit(attributes: dict[str, Any], array_name: str) -> tuple[Any, str | None]:
+    for key in (
+        f"units|{array_name}",
+        f"unit|{array_name}",
+        f"{array_name}_unit",
+        "units|msd",
+        "unit|msd",
+        "msd_unit",
+    ):
+        if key in attributes:
+            return attributes[key], key
+    return None, None
+
+
+def _canonical_squared_length_unit(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower().replace("²", "^2").replace("å", "angstrom")
+    aliases = {
+        "a^2": "angstrom^2",
+        "ang^2": "angstrom^2",
+        "angstrom^2": "angstrom^2",
+        "angstrom**2": "angstrom^2",
+        "m^2": "m^2",
+        "m**2": "m^2",
+        "cm^2": "cm^2",
+        "cm**2": "cm^2",
+        "nm^2": "nm^2",
+        "nm**2": "nm^2",
+    }
+    return aliases.get(normalized)
+
+
+def validate_msd_arrays(
+    arrays: dict[str, Any], attributes: dict[str, Any], *, example_limit: int
+) -> dict[str, Any]:
+    """Validate stored MSD arrays while keeping unresolved units explicit."""
+
+    import numpy as np
+
+    valid: list[dict[str, Any]] = []
+    unresolved: list[str] = []
+    errors: list[str] = []
+    recognized = [
+        (name, value)
+        for name, value in sorted(arrays.items())
+        if _MSD_ARRAY.fullmatch(name)
+    ]
+    for name, values in recognized:
+        array = np.asarray(values)
+        if (
+            array.size == 0
+            or not np.issubdtype(array.dtype, np.number)
+            or np.issubdtype(array.dtype, np.bool_)
+            or np.issubdtype(array.dtype, np.complexfloating)
+        ):
+            errors.append(f"{name}: MSD array must be non-empty, real and numeric")
+            continue
+        numeric = array.astype(float, copy=False).reshape(-1)
+        if not np.all(np.isfinite(numeric)) or np.any(numeric < 0.0):
+            errors.append(f"{name}: MSD values must be finite and non-negative")
+            continue
+        declared_unit, unit_source = _msd_unit(attributes, name)
+        canonical_unit = _canonical_squared_length_unit(declared_unit)
+        if canonical_unit is None:
+            unresolved.append(name)
+            continue
+        valid.append(
+            {
+                "array": name,
+                "shape": list(array.shape),
+                "dtype": str(array.dtype),
+                "declared_unit": declared_unit,
+                "canonical_unit": canonical_unit,
+                "unit_source": unit_source,
+                "min": float(np.min(numeric)),
+                "max": float(np.max(numeric)),
+            }
+        )
+
+    numeric_count = len(valid) + len(unresolved)
+    if errors:
+        status = "invalid"
+    elif unresolved:
+        status = "unit_unresolved"
+    elif valid:
+        status = "recoverable"
+    else:
+        status = "missing"
+    return {
+        "status": status,
+        "recoverable": status == "recoverable",
+        "numeric_arrays_recoverable": numeric_count > 0 and not errors,
+        "recognized_array_count": len(recognized),
+        "valid_arrays": _bounded(valid, example_limit, "stored AiiDA arrays"),
+        "unresolved_unit_arrays": _bounded(
+            unresolved, example_limit, "numeric MSD arrays lacking unit provenance"
+        ),
+        "errors": errors[:example_limit],
+    }
+
+
+def _aggregate_msd_records(records: list[dict[str, Any]], example_limit: int) -> dict[str, Any]:
+    errors = [error for item in records for error in item["errors"]]
+    unresolved_examples = [
+        name
+        for item in records
+        for name in item["unresolved_unit_arrays"]["examples"]
+    ]
+    unresolved_count = sum(
+        item["unresolved_unit_arrays"]["count"] for item in records
+    )
+    valid_count = sum(item["valid_arrays"]["count"] for item in records)
+    candidate_count = sum(item["recognized_array_count"] for item in records)
+    payload_inspected = sum(item.get("payload_arrays_inspected", 0) for item in records)
+    numeric_recoverable = any(item["numeric_arrays_recoverable"] for item in records)
+    if errors:
+        status = "invalid"
+    elif unresolved_count:
+        status = "unit_unresolved"
+    elif valid_count:
+        status = "recoverable"
+    else:
+        status = "missing"
+    return {
+        "status": status,
+        "recoverable": status == "recoverable",
+        "numeric_arrays_recoverable": numeric_recoverable and not errors,
+        "records_inspected": len(records),
+        "candidate_array_count": candidate_count,
+        "payload_arrays_inspected": payload_inspected,
+        "payload_arrays_uninspected": candidate_count - payload_inspected,
+        "validation_scope": "all array-name/unit metadata; bounded array payload sample",
+        "valid_array_count": valid_count,
+        "unresolved_unit_arrays": _bounded(
+            unresolved_examples,
+            example_limit,
+            "MSD arrays lacking explicit unit provenance",
+        ),
+        "errors": errors[:example_limit],
+    }
 
 
 def _reference_capabilities(
     *,
     structure_count: int,
     trajectory_count: int,
-    distinct_temperature_count: int,
-    diffusion_groups: list[dict[str, Any]],
-    msd_groups: list[dict[str, Any]],
+    temperature_recoverable: bool,
+    diffusion_recoverable: bool,
+    msd_recoverable: bool,
     direct_links: int,
     process_links: int,
 ) -> dict[str, bool]:
-    """Derive recoverability flags from observed archive metadata only."""
+    """Derive recoverability flags from observed archive data."""
 
     return {
         "structures_recoverable": structure_count > 0,
         "trajectories_recoverable": trajectory_count > 0,
-        "temperature_metadata_recoverable": distinct_temperature_count > 0,
-        "diffusion_reference_recoverable": bool(diffusion_groups),
-        "msd_reference_recoverable": bool(msd_groups),
+        "temperature_metadata_recoverable": temperature_recoverable,
+        "diffusion_reference_recoverable": diffusion_recoverable,
+        "msd_reference_recoverable": msd_recoverable,
         "provenance_linkage_recoverable": direct_links > 0 or process_links > 0,
     }
 
 
-
-def _metadata_payload_fields(value: Any, prefix: str = "") -> tuple[set[str], set[str], set[str]]:
-    """Find numerical, array-schema and unit fields without loading repository arrays."""
-
-    numeric: set[str] = set()
-    arrays: set[str] = set()
-    units: set[str] = set()
-    if isinstance(value, dict):
-        for key, child in value.items():
-            path = f"{prefix}.{key}" if prefix else str(key)
-            lowered = str(key).lower()
-            child_numeric, child_arrays, child_units = _metadata_payload_fields(child, path)
-            numeric.update(child_numeric)
-            arrays.update(child_arrays)
-            units.update(child_units)
-            if "unit" in lowered and isinstance(child, str) and child.strip():
-                units.add(path)
-            if (
-                (lowered.startswith("array|") or "shape" in lowered)
-                and isinstance(child, (list, tuple))
-                and child
-            ):
-                arrays.add(path)
-    elif isinstance(value, (int, float)) and not isinstance(value, bool):
-        if math.isfinite(float(value)):
-            numeric.add(prefix)
-    elif (
-        isinstance(value, (list, tuple))
-        and value
-        and all(
-            isinstance(item, (int, float))
-            and not isinstance(item, bool)
-            and math.isfinite(float(item))
-            for item in value[:100]
-        )
-
-    ):
-        numeric.add(prefix)
-    return numeric, arrays, units
-def _query_group_members(group_id: int, limit: int) -> dict[str, Any]:
+def _query_group_members(group_id: int, group_label: str, limit: int) -> dict[str, Any]:
     from aiida import orm  # type: ignore[import-not-found]
 
     query = orm.QueryBuilder()
@@ -309,31 +589,75 @@ def _query_group_members(group_id: int, limit: int) -> dict[str, Any]:
     query.order_by({"member": ["uuid"]})
     counts: Counter[str] = Counter()
     examples: list[dict[str, Any]] = []
-    numeric_fields: set[str] = set()
-    array_fields: set[str] = set()
-    unit_fields: set[str] = set()
+    diffusion_records: list[dict[str, Any]] = []
+    msd_records: list[dict[str, Any]] = []
+    msd_payload_arrays_inspected = 0
     total = 0
     for uuid, node_type, label, attributes in query.iterall(batch_size=500):
         total += 1
         node_type = str(node_type)
         counts[node_type] += 1
-        if node_type.startswith("data.") and isinstance(attributes, dict):
-            numeric, arrays, units = _metadata_payload_fields(attributes)
-            numeric_fields.update(numeric)
-            array_fields.update(arrays)
-            unit_fields.update(units)
+        reference_group = any(
+            token in group_label.lower() for token in ("diffusion", "msd", "mean square")
+        )
+        if reference_group and isinstance(attributes, dict):
+            if "diffusion" in group_label.lower():
+                diffusion_records.append(attributes)
+            array_names = sorted(
+                key.removeprefix("array|")
+                for key in attributes
+                if key.startswith("array|")
+                and _MSD_ARRAY.fullmatch(key.removeprefix("array|"))
+            )
+            if array_names:
+                remaining = max(0, limit - msd_payload_arrays_inspected)
+                payload_names = array_names[:remaining]
+                try:
+                    arrays: dict[str, Any] = {}
+                    if payload_names:
+                        node = orm.load_node(uuid=str(uuid))
+                        arrays = {name: node.get_array(name) for name in payload_names}
+                    evidence = validate_msd_arrays(
+                        arrays, attributes, example_limit=limit
+                    )
+                    msd_payload_arrays_inspected += len(payload_names)
+                except Exception as exc:
+                    evidence = {
+                        "status": "invalid",
+                        "recoverable": False,
+                        "numeric_arrays_recoverable": False,
+                        "recognized_array_count": len(array_names),
+                        "valid_arrays": _bounded([], limit, "stored AiiDA arrays"),
+                        "unresolved_unit_arrays": _bounded(
+                            [], limit, "numeric MSD arrays lacking unit provenance"
+                        ),
+                        "errors": [f"{type(exc).__name__}: {exc}"],
+                    }
+                metadata_unresolved = [
+                    name
+                    for name in array_names
+                    if _canonical_squared_length_unit(_msd_unit(attributes, name)[0])
+                    is None
+                ]
+                evidence["recognized_array_count"] = len(array_names)
+                evidence["payload_arrays_inspected"] = len(payload_names)
+                evidence["unresolved_unit_arrays"] = _bounded(
+                    metadata_unresolved,
+                    limit,
+                    "MSD arrays lacking explicit unit provenance",
+                )
+                if metadata_unresolved and evidence["status"] != "invalid":
+                    evidence["status"] = "unit_unresolved"
+                    evidence["recoverable"] = False
+                msd_records.append(evidence)
         if len(examples) < limit:
             examples.append({"uuid": str(uuid), "node_type": node_type, "label": str(label)})
     return {
         "member_count": total,
         "node_type_counts": dict(sorted(counts.items())),
         "member_examples": examples,
-        "payload_schema": {
-            "recoverable": bool(numeric_fields or array_fields) and bool(unit_fields),
-            "numeric_fields": _bounded(numeric_fields, limit, "AiiDA data-node attributes"),
-            "array_fields": _bounded(array_fields, limit, "AiiDA data-node attributes"),
-            "unit_fields": _bounded(unit_fields, limit, "AiiDA data-node attributes"),
-        },
+        "diffusion_reference": _aggregate_diffusion_records(diffusion_records, limit),
+        "msd_reference": _aggregate_msd_records(msd_records, limit),
     }
 
 
@@ -365,7 +689,7 @@ def _query_link_count(
 
 
 def _query_loaded_archive(example_limit: int) -> dict[str, Any]:
-    """Query metadata only; repository trajectory arrays are never loaded."""
+    """Query metadata plus bounded named temperature/MSD arrays; coordinates are never loaded."""
 
     from aiida import orm  # type: ignore[import-not-found]
 
@@ -397,75 +721,92 @@ def _query_loaded_archive(example_limit: int) -> dict[str, Any]:
             {
                 "label": str(label),
                 "type_string": str(type_string),
-                **_query_group_members(int(group_id), example_limit),
+                **_query_group_members(int(group_id), str(label), example_limit),
             }
         )
     groups.sort(key=lambda item: (item["label"], item["type_string"]))
 
-    temperature_examples: list[dict[str, Any]] = []
-    trajectories_with_temperature = 0
+    temperature_candidates = 0
+    temperature_records: list[dict[str, Any]] = []
     material_identifiers: set[str] = set()
-    temperature_values: set[str] = set()
     for node_type in trajectory_types:
         trajectory_query = orm.QueryBuilder()
         trajectory_query.append(
             orm.Node,
             filters={"node_type": node_type},
-            project=["uuid", "label", "attributes", "extras"],
+            project=["uuid", "attributes", "extras"],
             tag="trajectory",
         )
         trajectory_query.order_by({"trajectory": ["uuid"]})
-        for uuid, label, attributes, extras in trajectory_query.iterall(batch_size=200):
-            values = _temperature_values({"attributes": attributes, "extras": extras})
-            match = re.search(r"(?<!\d)(\d+(?:\.\d+)?)\s*[Kk](?!\w)", str(label or ""))
-            if match:
-                values.append(
-                    {
-                        "field": "label",
-                        "value": float(match.group(1)),
-                        "unit": "K",
-                        "source": "derived_from_node_label",
-                    }
-                )
-            if values:
-                trajectories_with_temperature += 1
-                temperature_values.update(
-                    json.dumps(
-                        {"value": item["value"], "unit": item.get("unit")},
-                        sort_keys=True,
-                    )
-                    for item in values
-                )
-                for item in values:
-                    if len(temperature_examples) < example_limit:
-                        temperature_examples.append({"uuid": str(uuid), **item})
+        for uuid, attributes, extras in trajectory_query.iterall(batch_size=200):
+            if isinstance(attributes, dict) and "array|temperatures" in attributes:
+                temperature_candidates += 1
+                if len(temperature_records) < example_limit:
+                    try:
+                        node = orm.load_node(uuid=str(uuid))
+                        evidence = validate_temperature_array(
+                            node.get_array("temperatures"),
+                            attributes.get("units|temperatures"),
+                            example_limit=example_limit,
+                        )
+                    except Exception as exc:
+                        evidence = {
+                            "status": "invalid",
+                            "recoverable": False,
+                            "declared_unit": attributes.get("units|temperatures"),
+                            "canonical_unit": None,
+                            "dtype": None,
+                            "value_count": 0,
+                            "min_K": None,
+                            "max_K": None,
+                            "representative_K": [],
+                            "errors": [f"{type(exc).__name__}: {exc}"],
+                        }
+                    temperature_records.append({"uuid": str(uuid), **evidence})
             for metadata in (attributes, extras):
                 if isinstance(metadata, dict):
                     for key in ("material_id", "structure_id", "mp_id"):
                         if metadata.get(key) not in (None, ""):
                             material_identifiers.add(str(metadata[key]))
 
+    temperature_summary = _aggregate_temperature_records(
+        temperature_records, temperature_candidates, example_limit
+    )
     diffusion_candidates = [
         group for group in groups if "diffusion" in group["label"].lower() and group["member_count"]
     ]
     diffusion_groups = [
         group
         for group in diffusion_candidates
-        if group["payload_schema"]["recoverable"]
+        if group["diffusion_reference"]["recoverable"]
     ]
+    diffusion_invalid = [
+        group
+        for group in diffusion_candidates
+        if group["diffusion_reference"]["status"] == "invalid"
+    ]
+    diffusion_recoverable = bool(diffusion_groups) and not diffusion_invalid
+
     msd_candidates = [
         group
         for group in groups
-        if (
-            "msd" in group["label"].lower()
-            or "mean_square" in group["label"].lower()
-            or "mean square" in group["label"].lower()
-        )
-        and group["member_count"]
+        if group["msd_reference"]["status"] != "missing"
+        or "msd" in group["label"].lower()
     ]
     msd_groups = [
-        group for group in msd_candidates if group["payload_schema"]["recoverable"]
+        group for group in msd_candidates if group["msd_reference"]["recoverable"]
     ]
+    msd_unresolved = [
+        group
+        for group in msd_candidates
+        if group["msd_reference"]["status"] == "unit_unresolved"
+    ]
+    msd_invalid = [
+        group
+        for group in msd_candidates
+        if group["msd_reference"]["status"] == "invalid"
+    ]
+    msd_recoverable = bool(msd_groups) and not msd_unresolved and not msd_invalid
     try:
         direct_links = _query_link_count(structure_types, trajectory_types, through_process=False)
         process_links = _query_link_count(structure_types, trajectory_types, through_process=True)
@@ -483,31 +824,40 @@ def _query_loaded_archive(example_limit: int) -> dict[str, Any]:
         "node_type_counts": dict(sorted(node_types.items())),
         "structure_count": structure_count,
         "trajectory_count": trajectory_count,
-        "temperature_metadata": {
-            "trajectories_with_temperature": trajectories_with_temperature,
-            "examples": temperature_examples,
-            "example_limit": example_limit,
-            "distinct_temperature_count": len(temperature_values),
-            "distinct_temperature_values": _bounded(
-                (json.loads(value) for value in temperature_values),
-                example_limit,
-                "trajectory node metadata and labels",
-            ),
-        },
+        "temperature_metadata": temperature_summary,
         "diffusion_references": {
+            "status": "recoverable" if diffusion_recoverable else (
+                "invalid" if diffusion_invalid else "missing"
+            ),
+            "recoverable": diffusion_recoverable,
             "candidate_group_count": len(diffusion_candidates),
             "recoverable_group_count": len(diffusion_groups),
             "node_label_examples": label_hits["diffusion"],
-            "candidate_group_examples": [
-                group["label"] for group in diffusion_candidates[:example_limit]
+            "group_evidence": [
+                {
+                    "label": group["label"],
+                    **group["diffusion_reference"],
+                }
+                for group in diffusion_candidates[:example_limit]
             ],
         },
         "msd_references": {
+            "status": "recoverable" if msd_recoverable else (
+                "invalid" if msd_invalid else (
+                    "unit_unresolved" if msd_unresolved else "missing"
+                )
+            ),
+            "recoverable": msd_recoverable,
+            "numeric_arrays_recoverable": any(
+                group["msd_reference"]["numeric_arrays_recoverable"]
+                for group in msd_candidates
+            ),
             "candidate_group_count": len(msd_candidates),
             "recoverable_group_count": len(msd_groups),
             "node_label_examples": label_hits["msd"],
-            "candidate_group_examples": [
-                group["label"] for group in msd_candidates[:example_limit]
+            "group_evidence": [
+                {"label": group["label"], **group["msd_reference"]}
+                for group in msd_candidates[:example_limit]
             ],
         },
         "provenance_linkage": {
@@ -521,9 +871,9 @@ def _query_loaded_archive(example_limit: int) -> dict[str, Any]:
         "capabilities": _reference_capabilities(
             structure_count=structure_count,
             trajectory_count=trajectory_count,
-            distinct_temperature_count=len(temperature_values),
-            diffusion_groups=diffusion_groups,
-            msd_groups=msd_groups,
+            temperature_recoverable=temperature_summary["recoverable"],
+            diffusion_recoverable=diffusion_recoverable,
+            msd_recoverable=msd_recoverable,
             direct_links=direct_links,
             process_links=process_links,
         ),
