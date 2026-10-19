@@ -1,0 +1,515 @@
+{
+  "schema_version": "e3sse.protocol.freeze.config.v1",
+  "materialization_mode": "production",
+  "paths": {
+    "repository_root": "..",
+    "output_root": "/srv/ben/e3sse/outputs/protocol_freeze"
+  },
+  "inputs": {
+    "repository_git_sha": "CURRENT",
+    "g0_audit": {
+      "path": "/srv/ben/e3sse/outputs/g0/12f8323e381ecbbc/audit.json",
+      "run_id": "12f8323e381ecbbc",
+      "sha256": null
+    },
+    "g0_input_manifest": {
+      "path": "/srv/ben/e3sse/outputs/g0/12f8323e381ecbbc/inputs.json",
+      "sha256": null
+    },
+    "server_config": {
+      "path": "server.json",
+      "sha256": null
+    },
+    "mplitrj_provenance": {
+      "root": "/srv/ben/e3sse/outputs/provenance/mplitrj/ee3c707035a1da35",
+      "index_id": "ee3c707035a1da35",
+      "manifest_sha256": null
+    },
+    "nebdft2k_partition_linkage": null,
+    "material_chemical_system_linkage": null
+  },
+  "source_documents": {
+    "coding_agent_guide": {
+      "path": "../docs/research/AI__Coding_Agent_Config_and_Prompt_Guide.docx",
+      "sha256": "2c328f7854d4f94471a90fc1e5c29db19364ddd52ab20dd211c2befd159ca8c6"
+    },
+    "paper_narrative": {
+      "path": "../docs/research/E3-SSE_Paper_Narrative_and_Related_Work.docx",
+      "sha256": "47f8aabdf31467ca97b02eeccdb00cf1041073f27f0d4cd8c4635fd5bcbb9faf"
+    },
+    "research_design": {
+      "path": "../docs/research/E3-SSE_Research_Design.docx",
+      "sha256": "13ed284e8d79863447327507588f495e172a49b49c0dd48724e90260aa25c6d8"
+    }
+  },
+  "protocol": {
+    "partition_base_seed": 2026,
+    "unit_contract": {
+      "position": {
+        "canonical_analysis_unit": "angstrom",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      },
+      "cell": {
+        "canonical_analysis_unit": "angstrom",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      },
+      "dft_energy": {
+        "canonical_analysis_unit": "eV",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      },
+      "ml_energy": {
+        "canonical_analysis_unit": "eV",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      },
+      "dft_force": {
+        "canonical_analysis_unit": "eV/angstrom",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      },
+      "ml_force": {
+        "canonical_analysis_unit": "eV/angstrom",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      },
+      "stress": {
+        "canonical_analysis_unit": "eV/angstrom^3",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      },
+      "barrier": {
+        "canonical_analysis_unit": "eV",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      },
+      "temperature": {
+        "canonical_analysis_unit": "K",
+        "production_source_unit_evidence": {
+          "source_unit": null,
+          "conversion": null,
+          "status": "unresolved",
+          "evidence": null
+        }
+      }
+    },
+    "model_groups": {
+      "A": [
+        {
+          "paper_candidate": "CHGNet",
+          "frozen_group": "A",
+          "resolution_status": "unresolved",
+          "required_before_freeze": [
+            "canonical_name",
+            "architecture_family",
+            "pretraining_dataset",
+            "upstream",
+            "release_revision",
+            "checkpoint_id",
+            "weights_sha256",
+            "package_name",
+            "package_version",
+            "adapter_name",
+            "adapter_version",
+            "load_options",
+            "license_identifier",
+            "license_verified",
+            "fine_tuned",
+            "reference_compatibility"
+          ],
+          "selected_implementation": null,
+          "concrete_checkpoint": null
+        },
+        {
+          "paper_candidate": "M3GNet",
+          "frozen_group": "A",
+          "resolution_status": "unresolved",
+          "required_before_freeze": [
+            "canonical_name",
+            "architecture_family",
+            "pretraining_dataset",
+            "upstream",
+            "release_revision",
+            "checkpoint_id",
+            "weights_sha256",
+            "package_name",
+            "package_version",
+            "adapter_name",
+            "adapter_version",
+            "load_options",
+            "license_identifier",
+            "license_verified",
+            "fine_tuned",
+            "reference_compatibility"
+          ],
+          "selected_implementation": null,
+          "concrete_checkpoint": null
+        },
+        {
+          "paper_candidate": "MACE-MP-0 small",
+          "frozen_group": "A",
+          "resolution_status": "unresolved",
+          "required_before_freeze": [
+            "canonical_name",
+            "architecture_family",
+            "pretraining_dataset",
+            "upstream",
+            "release_revision",
+            "checkpoint_id",
+            "weights_sha256",
+            "package_name",
+            "package_version",
+            "adapter_name",
+            "adapter_version",
+            "load_options",
+            "license_identifier",
+            "license_verified",
+            "fine_tuned",
+            "reference_compatibility"
+          ],
+          "selected_implementation": null,
+          "concrete_checkpoint": null
+        },
+        {
+          "paper_candidate": "SevenNet-0",
+          "frozen_group": "A",
+          "resolution_status": "unresolved",
+          "required_before_freeze": [
+            "canonical_name",
+            "architecture_family",
+            "pretraining_dataset",
+            "upstream",
+            "release_revision",
+            "checkpoint_id",
+            "weights_sha256",
+            "package_name",
+            "package_version",
+            "adapter_name",
+            "adapter_version",
+            "load_options",
+            "license_identifier",
+            "license_verified",
+            "fine_tuned",
+            "reference_compatibility"
+          ],
+          "selected_implementation": null,
+          "concrete_checkpoint": null
+        }
+      ],
+      "B1": [
+        {
+          "paper_candidate": "one released MatPES-trained model",
+          "frozen_group": "B1",
+          "resolution_status": "unresolved",
+          "required_before_freeze": [
+            "full model provenance",
+            "reference_compatibility"
+          ],
+          "selected_implementation": null,
+          "concrete_checkpoint": null
+        }
+      ],
+      "B2": [
+        {
+          "paper_candidate": "one released OMat24-trained model",
+          "frozen_group": "B2",
+          "resolution_status": "unresolved",
+          "required_before_freeze": [
+            "full model provenance",
+            "reference_compatibility"
+          ],
+          "selected_implementation": null,
+          "concrete_checkpoint": null,
+          "selection_preference": "architecture also present in Group A when available (Research Design 5.5)"
+        }
+      ],
+      "C": [
+        {
+          "paper_candidate": "optional fine-tuned Group-A comparator",
+          "frozen_group": "C",
+          "resolution_status": "optional_unresolved",
+          "required_if_enabled": [
+            "full model provenance",
+            "parent_checkpoint_id",
+            "training_data_provenance",
+            "reference_compatibility"
+          ],
+          "selected_implementation": null,
+          "concrete_checkpoint": null
+        }
+      ]
+    },
+    "decision_gates": {
+      "G0": {
+        "source": "Research Design 6 Table 9",
+        "paper_pass_condition": "nebDFT2k images carry per-image DFT energies and forces; FPMD references recoverable",
+        "paper_contingency": "Obtain FPMD D_T from publication tables; estimate panel s from at most 10 Quantum ESPRESSO single points per material at reference settings",
+        "repository_interpretation": "engineering_choice: static branch (nebDFT2k, MPLiTrj, BVEL13k, nebBVSE122k) and transport branch (FPMD) are read from the G0 audit and reported separately; Studies 1, 2a and 4 depend only on the static branch"
+      },
+      "G1": {
+        "source": "Research Design 6 Table 9",
+        "paper_pass_condition": "rho_SRT >= 0.10 for at least one Group-A model with s-bar <= 0.9",
+        "paper_contingency": "Re-frame C1 as an error decomposition (uniform vs element-resolved vs energy-dependent vs residual); C3 proceeds with raw scores"
+      },
+      "G2": {
+        "source": "Research Design 6 Table 9",
+        "paper_pass_condition": "MSD collapse within uncertainty",
+        "paper_contingency": "Correct thermostat coupling; do not start the panel"
+      },
+      "G3": {
+        "source": "Research Design 6 Table 9",
+        "paper_pass_condition": "Delta log10 D reduction CI excludes 0",
+        "paper_contingency": "Report static success and dynamic failure; analyse s_Li vs s_host"
+      },
+      "G4": {
+        "source": "Research Design 6 Table 9",
+        "paper_pass_condition": "Realised FDR <= alpha + 2 MC s.e.",
+        "paper_contingency": "Audit grouping and exchangeability before any prospective use"
+      }
+    },
+    "unresolved_items": [
+      {
+        "id": "production_source_unit_evidence",
+        "resolution_category": "resolve_from_production_artifact",
+        "blocking": true,
+        "paper_reference": "Research Design Nomenclature",
+        "required_resolution": "production source unit and registered conversion for every required quantity, proven from production schemas before conversion; canonical analysis units are frozen"
+      },
+      {
+        "id": "nebdft2k_convergence_flag_availability",
+        "resolution_category": "resolve_from_production_artifact",
+        "blocking": true,
+        "paper_reference": "Research Design 5.3",
+        "required_resolution": "state from the recorded nebDFT2k column names whether failed/non-monotone NEB flags are provided, and which"
+      },
+      {
+        "id": "endpoint_origin_policy",
+        "resolution_category": "resolve_from_paper",
+        "blocking": false,
+        "paper_reference": "Research Design 3.6",
+        "resolution": {
+          "status": "resolved",
+          "evidence": "Research Design 3.6",
+          "rule": "target-hop NEB-path frames prohibited (oracle only); target-hop endpoint-relaxation frames admissible; other hops of the same structure admissible; unidentified origin fails closed"
+        }
+      },
+      {
+        "id": "study1_repeat_population_scope",
+        "resolution_category": "resolve_from_paper",
+        "blocking": false,
+        "paper_reference": "Research Design 5.4, 5.6",
+        "resolution": {
+          "status": "resolved",
+          "evidence": "Research Design 5.4, 5.6",
+          "rule": "the Study 1 atlas uses the published training partition; when a repeated partition is evaluated, its softening estimates use only that repeat's training/calibration side; the role of published validation data follows published_validation_split_role"
+        }
+      },
+      {
+        "id": "study5_evaluation_system_scope",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.4, 5.10",
+        "required_resolution": "define 'evaluation partition' for the Study 5 exclusion: the implemented candidate is exclude every chemical system in the published test split and in each of the ten repeated test sides; published validation systems are added if published_validation_split_role makes validation an evaluation partition; the conservative alternative excludes the whole partition universe (repeated calibration sides included)"
+      },
+      {
+        "id": "test_side_material_scope_frame_population",
+        "resolution_category": "resolve_from_paper",
+        "blocking": false,
+        "paper_reference": "Research Design 3.6, 5.4",
+        "resolution": {
+          "status": "resolved",
+          "evidence": "Research Design 3.6, 5.4",
+          "rule": "test-side material-level s uses only non-path frames of the target material (endpoint-relaxation frames), never NEB-path frames of any hop"
+        }
+      },
+      {
+        "id": "transition_metal_hubbard_u_machine_predicate",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.3",
+        "required_resolution": "explicit element set defining 'transition metals or other elements for which MPtrj uses Hubbard U'"
+      },
+      {
+        "id": "mixed_anion_family_precedence",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.6",
+        "required_resolution": "assignment of mixed-anion and oxyanion compounds to oxide/sulfide/halide/nitride/other"
+      },
+      {
+        "id": "configurational_energy_decile_definition",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.6",
+        "required_resolution": "energy reference, fit population, and binning rule for configurational-energy deciles"
+      },
+      {
+        "id": "label_budget_repetition_and_stability_rule",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 3.6, 4 RQ4",
+        "required_resolution": "number of subsampling repeats and the operational plateau rule; K in {1,3,5,10,30} is paper-specified"
+      },
+      {
+        "id": "estimator_minimum_support",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 3.6",
+        "required_resolution": "minimum frames/force components and near-zero-denominator rule for global, family, material and element estimates"
+      },
+      {
+        "id": "s_bar_definition",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 4 Table 4, 6 Table 9",
+        "required_resolution": "whether s-bar (G1, RQ1 'median s <= 0.9') is the pooled Eq. 17 estimate or the median of material-level s"
+      },
+      {
+        "id": "s_host_definition",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 3.5, 5.6",
+        "required_resolution": "definition of s_host (e.g. Eq. 17 over all non-Li force components) for the s_Li vs s_host diagnostic"
+      },
+      {
+        "id": "holm_family_interpretation",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.11",
+        "required_resolution": "whether P1 contributes one test or one per Group-A model to the Holm family with P2"
+      },
+      {
+        "id": "published_validation_split_role",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.2, 5.4",
+        "required_resolution": "role of the published LiTraj validation split (training/development, evaluation, or unused); train and test roles follow the paper"
+      },
+      {
+        "id": "published_split_chemical_system_overlap_rule",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.4",
+        "required_resolution": "handling of chemical systems spanning published splits when fitting pooled training-side s"
+      },
+      {
+        "id": "study4_predictor_calibration_independence",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 3.8, 5.4",
+        "required_resolution": "how pooled s inside the Study 4 predictor is fixed without calibration or test outcomes while preserving calibration/test exchangeability"
+      },
+      {
+        "id": "g4_monte_carlo_standard_error_definition",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.9, 6 Table 9",
+        "required_resolution": "computation of the Monte Carlo standard error for realised FDR given 200 dependent draws within each of ten partitions"
+      },
+      {
+        "id": "repeated_test_pilot_overlap_rule",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 4, 5.4",
+        "required_resolution": "how pilot thresholds tuned on published-train hops are kept independent of repeated-partition test sides that contain those hops"
+      },
+      {
+        "id": "model_checkpoint_and_reference_compatibility_resolution",
+        "resolution_category": "requires_preanalysis_scientific_decision",
+        "blocking": true,
+        "paper_reference": "Research Design 5.5",
+        "required_resolution": "concrete checkpoints, hashes, licences, package versions and reference compatibility for Group A and the B1/B2 selections"
+      },
+      {
+        "id": "preregistration_record",
+        "resolution_category": "resolve_from_production_artifact",
+        "blocking": true,
+        "paper_reference": "Research Design 4, 8",
+        "required_resolution": "public preregistration identifier (external record) recorded before the freeze"
+      },
+      {
+        "id": "fpmd_transport_reference_recoverability",
+        "resolution_category": "study3_only",
+        "blocking": false,
+        "paper_reference": "Research Design 6 Table 9 G0",
+        "required_resolution": "FPMD diffusion and MSD references recoverable; unseals Study 3 through a transport addendum, never through this protocol"
+      },
+      {
+        "id": "group_c_fine_tuned_comparator",
+        "resolution_category": "optional_later",
+        "blocking": false,
+        "paper_reference": "Research Design 5.5",
+        "required_resolution": "whether to enable the optional fine-tuned Group-C comparator"
+      }
+    ],
+    "known_deviations": [
+      "G0 is evaluated per branch: the static branch may be ready while G0 is globally partial; Study 3 stays gated until the FPMD transport branch is ready"
+    ],
+    "scientific_resolutions": {
+      "primary_tm_hubbard_u": {
+        "status": "unresolved",
+        "predicate_id": null,
+        "excluded_elements": null,
+        "evidence": null
+      },
+      "mixed_anion_family": {
+        "status": "unresolved",
+        "precedence": null,
+        "evidence": null
+      },
+      "configurational_energy_deciles": {
+        "status": "unresolved",
+        "energy_reference": null,
+        "fit_population": null,
+        "binning_rule": null,
+        "evidence": null
+      },
+      "label_budget_stability": {
+        "status": "unresolved",
+        "repeat_count": null,
+        "stability_metric": null,
+        "selection_rule": null,
+        "evidence": null
+      },
+      "holm_family": {
+        "status": "unresolved",
+        "family": null,
+        "evidence": null
+      }
+    }
+  }
+}

@@ -111,3 +111,88 @@ guessing:
 G0 re-hashes the indexed inputs (`audit.provenance_verify_input_sha256`) on every
 run. Content changes that preserve size and mtime therefore still invalidate the
 index.
+
+## Protocol freeze: local validation and server materialization
+
+Protocol-freeze code is developed and tested locally with synthetic JSON only.
+The canonical artifacts are materialized on the server from the existing G0
+audit and MPLiTrj provenance index; neither artifact is regenerated or copied
+into Git.
+
+The builder has two production outcomes, both sealed for outcome access:
+
+- `candidate_unfrozen`: every production input was validated and the dataset
+  manifest, chemical-system partitions, zero-overlap proofs, and Study 5
+  exclusion set were materialized, but `freeze_blockers` lists what is still
+  missing (unpinned hashes, unevidenced source units, unregistered scientific
+  resolutions, unresolved model checkpoints, open `unresolved_items`).
+- `frozen`: zero freeze blockers, a clean worktree at the pinned Git SHA, and
+  pinned SHA-256 for the G0 audit, G0 `inputs.json`, server configuration, and
+  MPLiTrj provenance manifest.
+
+Outcome access has two seals, mirroring the Research Design (registration, then
+a training-only pilot, then test analysis).  Seal 1: every outcome, training
+included, requires a validated `frozen` protocol, and training access is
+checked against the frozen partition membership rather than a declared role.
+Seal 2: non-training outcomes also require a hashed pilot amendment
+(`build_pilot_amendment`) that records the training-only thresholds and MDE
+analysis and is bound to the `protocol_id`.  Tuning and threshold selection are
+training-only.  FPMD outcomes additionally require a hashed transport addendum
+(`build_transport_addendum`) declaring the transport branch `ready`; it is kept
+outside the protocol hash so resolving the FPMD blockers never changes the
+identity of Studies 1, 2a and 4.
+
+Partitions and seeds do not depend on the open items, so a candidate and its
+later frozen protocol share identical partition memberships.  Different
+content always yields a different content-addressed `protocol_id` directory.
+
+Every consequential rule is listed in the protocol's `decision_register` as
+`paper_specified`, `repository_existing`, `engineering_choice`, or
+`production_derived`.  Each item in `configs/protocol_freeze.json`
+`unresolved_items` carries a `resolution_category` fixed in code
+(`PROTOCOL_ITEM_CATEGORIES`): `resolve_from_production_artifact` and
+`requires_preanalysis_scientific_decision` block the static freeze;
+`resolve_from_paper` items must carry a Research Design citation; `study3_only`
+and `optional_later` never block it.  Canonical analysis units are frozen in the
+protocol; production source units must still be evidenced in Phase B before any
+conversion.  Resolve items only with authoritative values; never edit a checklist
+entry to make a freeze pass.
+
+The primary softening eligibility rule (`research_design_3.6_v1`) is
+paper-specified: a target hop's NEB-path frames (`band_optim_step`, `traj_init`)
+are prohibited and oracle-only, its endpoint-relaxation frames (`source`,
+`target`) are admissible, other hops of the same structure are admissible (on
+the test side only through non-path frames, section 5.4), and unidentified
+provenance fails closed.  The 60/40 repeated-partition fractions count
+chemical-system groups.
+
+The v1 provenance index does not carry chemical systems, so the builder performs
+one read-only pass over the G0-hashed flattened MPLiTrj sources unless an
+explicit hashed `e3sse.material-chemical-system.v1` linkage artifact is supplied.
+The builder derives the nebDFT2k partition linkage from only the identifier
+columns (`edge_id`, `material_id`, `chemsys`, `_split`) of the unique G0-pinned
+CSV index and records the index's column names as convergence-flag evidence.
+Outcome columns are neither copied nor used.
+
+After checking out the reviewed commit on the server (clean worktree), run
+exactly, substituting that commit's full SHA (a commit cannot contain its own
+SHA, so it is pinned on the command line and recorded in `resolved_config.json`):
+
+```bash
+cd /srv/ben/e3sse
+git checkout <REVIEWED_COMMIT_SHA>
+PYTHONPATH=src python scripts/build_protocol_freeze.py \
+  --config configs/protocol_freeze.json --git-sha <REVIEWED_COMMIT_SHA> --resume
+```
+
+Required checklist items are fixed in code (`REQUIRED_RESOLUTION_ITEMS`): deleting
+an entry or setting `blocking: false` without a resolved record and evidence
+never clears its blocker.
+
+The builder validates the G0/provenance schemas, internal hashes, current server
+configuration, complete frame-to-hop coverage, chemical-system atomicity, and
+cross-dataset split propagation.  It writes only to the configured
+`outputs/protocol_freeze/<protocol-id>/` directory and refuses to overwrite an
+existing run without a valid `--resume`; resume rejects a changed Git SHA, code,
+configuration, input hash, or schema.  It does not run G0, MLIP inference, NEB,
+MD, softening estimation, or held-out outcome analysis.
