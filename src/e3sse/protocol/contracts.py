@@ -204,6 +204,13 @@ UNIT_CONVERSIONS: dict[tuple[str, str], float] = {
 # Roles whose outcomes are part of the frozen method itself (pilot/training data).
 _TUNING_ROLES = {"train"}
 _TUNING_PURPOSES = {"threshold_selection", "method_tuning", "hyperparameter_selection"}
+# The pilot may tune only on published-train MPLiTrj DFT frame labels of frames outside
+# every NEB path.  nebDFT2k barriers are never tuning inputs: every published-train hop
+# lies on the test side of some repeated partition, and path-frame energies encode them.
+PILOT_TUNING_OUTCOME_KINDS = ("mplitrj_nonpath_dft_force", "mplitrj_nonpath_dft_energy")
+# Pilot amendments may fix only Study 1/2 settings; every Study 4/5 rule is frozen
+# in the protocol before the pilot runs.
+PILOT_AMENDMENT_KEY_PREFIXES = ("study1_", "study2_")
 _OUTCOME_PURPOSES = {"preregistered_analysis", *_TUNING_PURPOSES}
 
 
@@ -295,6 +302,10 @@ def validate_pilot_amendment(amendment: Any, protocol: Mapping[str, Any]) -> Non
         raise ValueError("pilot amendment is not bound to this protocol")
     if amendment.get("data_roles") != ["train"]:
         raise ValueError("pilot amendment may use training-split outcomes only")
+    keys = [*amendment.get("frozen_thresholds", {}), *amendment.get("mde_analysis", {})]
+    foreign = [key for key in keys if not str(key).startswith(PILOT_AMENDMENT_KEY_PREFIXES)]
+    if foreign:
+        raise ValueError(f"pilot amendment may fix only Study 1/2 settings, not {foreign}")
     membership = protocol["partition_definition"]["partition_universe"]["membership_sha256"]
     if amendment.get("training_membership_sha256") != membership:
         raise ValueError("pilot amendment was not verified against the frozen membership")
@@ -348,7 +359,7 @@ def _verify_training_units(
     protocol: Mapping[str, Any],
     partition_records: Sequence[Mapping[str, Any]] | None,
     unit_ids: Iterable[str] | None,
-) -> None:
+) -> set[str]:
     """Resolve the caller's units against the frozen membership instead of trusting a label."""
 
     if partition_records is None or unit_ids is None:
@@ -365,6 +376,30 @@ def _verify_training_units(
     wrong = [unit for unit in units if split_by_unit.get(str(unit)) != {"train"}]
     if wrong:
         raise ValueError(f"units are not in the published training split: {wrong[:5]}")
+    return _unit_kinds(partition_records, units)
+
+
+def _unit_kinds(
+    partition_records: Sequence[Mapping[str, Any]], units: Sequence[str]
+) -> set[str]:
+    """Outcome kinds implied by the frozen membership rows of the requested units.
+
+    A unit is a frame (``frame_id``) or a hop (``hop_id``); a hop ID also names every
+    frame of that hop.  The kind never comes from the caller's label.
+    """
+
+    wanted = {str(unit) for unit in units}
+    kinds: set[str] = set()
+    for record in partition_records:
+        frame, hop = record.get("frame_id"), record.get("hop_id")
+        if record.get("record_kind") == "nebdft2k_hop":
+            if hop is not None and str(hop) in wanted:
+                kinds.add("nebdft2k_barrier")
+            continue
+        if (frame is not None and str(frame) in wanted) or (hop is not None and str(hop) in wanted):
+            nonpath = record.get("raw_file_kind") in _ENDPOINT_FILE_KINDS
+            kinds.add("mplitrj_nonpath_frame" if nonpath else "mplitrj_path_or_unidentified_frame")
+    return kinds
 
 
 def require_outcome_access(
@@ -375,18 +410,22 @@ def require_outcome_access(
     purpose: str = "preregistered_analysis",
     pilot_amendment: Mapping[str, Any] | None = None,
     transport_addendum: Mapping[str, Any] | None = None,
+    registration_addendum: Mapping[str, Any] | None = None,
     partition_records: Sequence[Mapping[str, Any]] | None = None,
     unit_ids: Iterable[str] | None = None,
+    outcome_kind: str | None = None,
 ) -> None:
     """Default-deny scientific outcomes; identifiers, counts, hashes, schemas never pass here.
 
-    Seal 1 (registration): every role, training included, requires a validated
-    frozen protocol, because Study 1 and the pilot follow registration
-    (Research Design 4 and 8).  Training access is verified against the frozen
-    membership, never a caller-declared role.  Tuning and threshold selection
-    are training-only.  Seal 2: non-training outcomes also require the hashed
-    training-only pilot amendment.  FPMD outcomes also require a transport
-    addendum declaring the transport branch ready.
+    Seal 1 (freeze + registration): every role, training included, requires a
+    validated frozen protocol and a registration addendum showing that exact
+    protocol registered on OSF, because Study 1 and the pilot follow registration
+    (Research Design 4, 5.1, 8).  Training access is verified against the frozen
+    membership, never a caller-declared role.  Tuning and threshold selection are
+    training-only.  Seal 2: non-training outcomes also require the hashed
+    training-only pilot amendment, deposited by a registered OSF update naming it.
+    FPMD outcomes also require a transport addendum declaring the transport branch
+    ready.
     """
 
     roles = {
@@ -404,6 +443,10 @@ def require_outcome_access(
         raise OutcomeAccessDenied("outcome must be a non-empty identifier")
     if purpose not in _OUTCOME_PURPOSES:
         raise OutcomeAccessDenied(f"unknown outcome-access purpose {purpose!r}")
+    if purpose in _TUNING_PURPOSES and outcome_kind not in PILOT_TUNING_OUTCOME_KINDS:
+        raise OutcomeAccessDenied(
+            f"{purpose} may use only {PILOT_TUNING_OUTCOME_KINDS}, not {outcome_kind!r}"
+        )
     if purpose in _TUNING_PURPOSES and role not in _TUNING_ROLES:
         raise OutcomeAccessDenied(f"{purpose} may use training-split outcomes only, not {role}")
     try:
@@ -411,10 +454,31 @@ def require_outcome_access(
     except (KeyError, TypeError, ValueError):
         raise OutcomeAccessDenied(f"{role} outcome {outcome!r} is sealed before protocol freeze")
     try:
+        from .registration import registration_status
+
+        # Research Design 4, 5.1, 8: the frozen protocol is registered on OSF before any
+        # outcome, training included (Study 1 and the pilot feed H3/H4, s-bar, G1).
+        if registration_status(frozen_protocol, registration_addendum) != "protocol_registered":
+            raise ValueError("outcomes need the frozen protocol registered on OSF (addendum)")
         if role in _TUNING_ROLES:
-            _verify_training_units(frozen_protocol, partition_records, unit_ids)
+            kinds = _verify_training_units(frozen_protocol, partition_records, unit_ids)
+            # Kinds are derived from the frozen membership; the caller label must agree.
+            if purpose in _TUNING_PURPOSES and kinds != {"mplitrj_nonpath_frame"}:
+                raise ValueError(
+                    f"tuning units must all be published-train non-path frames, got {sorted(kinds)}"
+                )
+            # Published-train barriers (e.g. the Study 2 recalibration comparator) are
+            # readable only for preregistered analysis after the pilot amendment exists.
+            if "nebdft2k_barrier" in kinds or str(outcome_kind or "").startswith(
+                "nebdft2k_barrier"
+            ):
+                validate_pilot_amendment(pilot_amendment, frozen_protocol)
             return
         validate_pilot_amendment(pilot_amendment, frozen_protocol)
+        # Pilot thresholds are fixed after the first registration, so non-training
+        # outcomes need the registered OSF update that deposits this exact amendment.
+        if registration_addendum.get("pilot_amendment_id") != pilot_amendment["amendment_id"]:
+            raise ValueError("non-training outcomes need a registered OSF update of this pilot amendment")
         if role == "fpmd_reference":
             validate_transport_addendum(transport_addendum, frozen_protocol)
     except (KeyError, TypeError, ValueError) as exc:
@@ -544,6 +608,12 @@ def unresolved_source_units(units: Mapping[str, Any]) -> list[str]:
             unresolved.append(name)
             continue
         if name == "stress" and evidence.get("status") == "not_retained":
+            if not _nonempty_string(evidence.get("evidence")):
+                unresolved.append(name)
+            continue
+        # Static studies (LiTraj, 0 K NEB) carry no temperature; FPMD temperature
+        # evidence is required by the Study 3 transport addendum instead.
+        if name == "temperature" and evidence.get("status") == "deferred_study3":
             if not _nonempty_string(evidence.get("evidence")):
                 unresolved.append(name)
             continue
@@ -1263,6 +1333,157 @@ def require_repeat_training_side(
             f"repeat {repeat_index} {fitted_object} uses test-side or unassigned "
             f"chemical systems: {offending[:5]}"
         )
+
+
+# Registered support rules (estimator_minimum_support; label_budget_stability).
+LABEL_BUDGET_K = (1, 3, 5, 10, 30)
+FULL_ESTIMATE_MIN_FRAMES = 10
+FULL_ESTIMATE_MIN_INFORMATIVE_COMPONENTS = 100
+INFORMATIVE_FORCE_EV_PER_A = 0.1
+POOLED_MIN_MATERIALS = 3
+LABEL_BUDGET_MIN_POPULATION = 60
+SUPPORT_PURPOSES = ("full_estimate", "label_budget_subsample")
+
+
+def _require_frozen_support_parameters(protocol: Mapping[str, Any]) -> None:
+    """The thresholds that select Study 1/2a units must be the protocol's frozen ones."""
+
+    expected = {
+        "full_estimate_min_frames": FULL_ESTIMATE_MIN_FRAMES,
+        "full_estimate_min_informative_components": FULL_ESTIMATE_MIN_INFORMATIVE_COMPONENTS,
+        "informative_force_eV_per_A": INFORMATIVE_FORCE_EV_PER_A,
+        "pooled_min_materials": POOLED_MIN_MATERIALS,
+        "label_budget_k": list(LABEL_BUDGET_K),
+        "label_budget_min_population": LABEL_BUDGET_MIN_POPULATION,
+    }
+    items = {item.get("id"): item for item in protocol.get("unresolved_items", [])}
+    resolution = items.get("estimator_minimum_support", {}).get("resolution", {})
+    if resolution.get("status") != "resolved" or resolution.get("parameters") != expected:
+        raise ValueError("support thresholds differ from the protocol's frozen estimator_minimum_support")
+
+
+def validate_softening_support(
+    selection: Mapping[str, Any],
+    protocol: Mapping[str, Any],
+    frames: Sequence[Mapping[str, Any]],
+    *,
+    purpose: str,
+    k: int | None = None,
+    population: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Check that the frames for one Eq. 17 estimate meet the support rule of its purpose.
+
+    Both purposes first require a primary, protocol-bound, untampered leakage audit
+    (:func:`require_primary_softening_selection`), and every frame must be one of its
+    eligible records with finite (n_atoms, 3) DFT forces in eV/angstrom, so leakage and
+    provenance are identical at every K.  ``full_estimate`` applies the registered
+    minimum support.  ``label_budget_subsample`` is the Research Design 3.6 label-budget
+    diagnostic: exactly ``k`` frames for a registered K, drawn from the material-scope
+    population, and exempt from the full-estimate support rule by registration.  The
+    caller passes ``population`` as the DFT forces of every eligible record, never a
+    chosen subset; the contract derives the population itself (eligible frames with at
+    least one |F_DFT| >= 0.1 eV/angstrom component, at least 60 of them), so it is the
+    same for every K, s_all and model, and returns its ``population_sha256``.
+    Subsample forces must equal the population's.  Subsamples are never filtered or
+    redrawn on their own forces.
+    """
+
+    import numpy as np
+
+    if purpose not in SUPPORT_PURPOSES:
+        raise ValueError(f"unknown support purpose {purpose!r}")
+    _require_frozen_support_parameters(protocol)
+    require_primary_softening_selection(selection, protocol)
+    eligible = {str(record["frame_id"]): record for record in selection["eligible_records"]}
+    identifiers = [str(frame.get("frame_id")) for frame in frames]
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("an estimate may not use the same frame twice")
+    outside = [frame_id for frame_id in identifiers if frame_id not in eligible]
+    if outside:
+        raise ValueError(f"frames are not leakage-eligible for this target: {outside[:5]}")
+    informative = 0
+    for frame in frames:
+        forces = np.asarray(frame.get("dft_forces"), dtype=float)
+        if forces.ndim != 2 or forces.shape[1] != 3 or forces.shape[0] == 0:
+            raise ValueError("DFT forces must have shape (n_atoms, 3)")
+        if not np.isfinite(forces).all():
+            raise ValueError("DFT forces must be finite")
+        informative += int((np.abs(forces) >= INFORMATIVE_FORCE_EV_PER_A).sum())
+    materials = {str(eligible[frame_id].get("material_id")) for frame_id in identifiers}
+    if purpose == "label_budget_subsample":
+        if k not in LABEL_BUDGET_K:
+            raise ValueError(f"label-budget K must be one of {LABEL_BUDGET_K}")
+        if selection.get("estimator_scope") != "material":
+            raise ValueError("label-budget subsamples draw from the material-scope population")
+        if len(frames) != k:
+            raise ValueError(f"a K={k} label-budget estimate uses exactly {k} frames")
+        if population is None:
+            raise ValueError("label-budget subsamples need the hop's frozen population")
+        supplied = {}
+        for frame in population:
+            frame_id = str(frame.get("frame_id"))
+            forces = np.asarray(frame.get("dft_forces"), dtype=float)
+            if frame_id not in eligible or frame_id in supplied:
+                raise ValueError("label-budget population must be unique eligible frames")
+            if forces.ndim != 2 or forces.shape[1] != 3 or not np.isfinite(forces).all():
+                raise ValueError("population DFT forces must be finite with shape (n_atoms, 3)")
+            supplied[frame_id] = forces
+        if set(supplied) != set(eligible):
+            raise ValueError(
+                "label-budget population must supply forces for every eligible frame; "
+                "the contract derives the population, callers may not choose it"
+            )
+        members = {
+            frame_id: forces
+            for frame_id, forces in sorted(supplied.items())
+            if (np.abs(forces) >= INFORMATIVE_FORCE_EV_PER_A).any()
+        }
+        if len(members) < LABEL_BUDGET_MIN_POPULATION:
+            raise ValueError(
+                f"label-budget hops need >= {LABEL_BUDGET_MIN_POPULATION} informative population "
+                f"frames, got {len(members)}"
+            )
+        foreign = [frame_id for frame_id in identifiers if frame_id not in members]
+        if foreign:
+            raise ValueError(f"subsample frames are outside the frozen population: {foreign[:5]}")
+        for frame in frames:
+            frame_id = str(frame["frame_id"])
+            if not np.array_equal(np.asarray(frame["dft_forces"], dtype=float), members[frame_id]):
+                raise ValueError(f"subsample forces differ from the population's for {frame_id}")
+        digest = hashlib.sha256()
+        for frame_id, forces in members.items():
+            digest.update(frame_id.encode() + b"\0" + repr(forces.shape).encode() + b"\0")
+            digest.update(np.ascontiguousarray(forces, dtype="<f8").tobytes())
+        population_sha256 = digest.hexdigest()
+        # Defence in depth: Eq. 17 is undefined when sum(F_DFT^2) == 0.
+        if sum(float((members[frame_id] ** 2).sum()) for frame_id in identifiers) <= 0.0:
+            raise ValueError("Eq. 17 denominator is zero for this subsample")
+    else:
+        if k is not None or population is not None:
+            raise ValueError("full estimates take neither a label-budget K nor a population")
+        population_sha256 = None
+        members = None
+        if len(frames) < FULL_ESTIMATE_MIN_FRAMES:
+            raise ValueError(
+                f"full estimate needs >= {FULL_ESTIMATE_MIN_FRAMES} frames, got {len(frames)}"
+            )
+        if informative < FULL_ESTIMATE_MIN_INFORMATIVE_COMPONENTS:
+            raise ValueError(
+                f"full estimate needs >= {FULL_ESTIMATE_MIN_INFORMATIVE_COMPONENTS} components "
+                f"with |F_DFT| >= {INFORMATIVE_FORCE_EV_PER_A} eV/A, got {informative}"
+            )
+        if selection.get("estimator_scope") != "material" and len(materials) < POOLED_MIN_MATERIALS:
+            raise ValueError(f"pooled estimates need >= {POOLED_MIN_MATERIALS} materials")
+    return {
+        "purpose": purpose,
+        "k": k,
+        "frames": len(frames),
+        "materials": len(materials),
+        "informative_components": informative,
+        "population_frames": None if members is None else len(members),
+        "population_sha256": population_sha256,
+        "selection_sha256": selection["selection_sha256"],
+    }
 
 
 def require_primary_softening_selection(

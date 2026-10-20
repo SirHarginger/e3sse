@@ -196,3 +196,43 @@ cross-dataset split propagation.  It writes only to the configured
 existing run without a valid `--resume`; resume rejects a changed Git SHA, code,
 configuration, input hash, or schema.  It does not run G0, MLIP inference, NEB,
 MD, softening estimation, or held-out outcome analysis.
+
+### Static freeze: production evidence and model smoke tests
+
+The pre-analysis decisions, model registry and canonical adapters are frozen in
+`configs/protocol_freeze.json` and `src/e3sse/protocol/{chemistry,adapters}.py`.
+Before the final materialization on the server, at the reviewed commit:
+
+1. Collect read-only source-unit evidence (headers for every split; numeric scale
+   checks on a few published-train frames only):
+
+   ```bash
+   PYTHONPATH=src python scripts/collect_unit_evidence.py \
+     --config configs/protocol_freeze.json --output outputs/unit_evidence --resume
+   ```
+
+   Record the report path and SHA-256, and the observed extxyz keys, in
+   `unit_contract.<quantity>.production_source_unit_evidence` for position, cell,
+   dft_energy, dft_force, stress and barrier (barrier = max - min of DFT image
+   energies, LiTraj `litraj.utils.get_barrier`), and resolve
+   `nebdft2k_convergence_flag_availability` from `index_columns`.
+2. Regenerate the model smoke reports with each pinned model environment
+   (`chgnet==0.3.0`; `matgl==1.2.7` + `dgl==2.1.0` + `torchdata==0.7.1`;
+   `mace-torch==0.3.6`; `sevenn==0.10.1`) and checkpoints matching the registry
+   SHA-256 values:
+
+   ```bash
+   PYTHONPATH=src <env>/bin/python scripts/smoke_test_models.py \
+     --config configs/protocol_freeze.json --model <canonical_name> \
+     --checkpoint <path> --output outputs/model_smoke --resume
+   ```
+
+3. Pin `inputs.*.sha256` from the production artifacts.  Registration is not a
+   freeze input: materialize the frozen protocol first, submit that exact
+   `protocol.json` to OSF, then record the registration with
+   `scripts/record_registration.py`.  The registration addendum binds the frozen
+   protocol ID, `protocol.json` SHA-256 and Git SHA, leaves the protocol ID
+   unchanged, and is required before any outcome is unsealed, training included
+   (`protocol_frozen_registration_pending` -> `protocol_registered`).  After the
+   training-only pilot, deposit the pilot amendment as an OSF update and record it
+   with `--pilot-amendment`; test-side outcomes require that registered update.

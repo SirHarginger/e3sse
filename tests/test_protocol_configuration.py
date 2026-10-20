@@ -5,6 +5,11 @@ import copy
 import pytest
 from protocol_fixtures import canonical_units, resolved_register
 
+from e3sse.protocol.chemistry import (
+    ANION_FAMILY_RULE_ID,
+    TM_RULE_ID,
+    primary_exclusion_elements,
+)
 from e3sse.protocol.configuration import (
     ProtocolConfigurationError,
     validate_protocol_configuration,
@@ -89,13 +94,13 @@ def _production_config() -> dict:
             "scientific_resolutions": {
                 "primary_tm_hubbard_u": {
                     "status": "resolved",
-                    "predicate_id": "tm-u-v1",
-                    "excluded_elements": ["Co", "Fe", "Mn", "Ni"],
+                    "predicate_id": TM_RULE_ID,
+                    "excluded_elements": primary_exclusion_elements(),
                     "evidence": "registration",
                 },
                 "mixed_anion_family": {
                     "status": "resolved",
-                    "precedence": ["oxide", "sulfide", "halide", "nitride", "other"],
+                    "rule_id": ANION_FAMILY_RULE_ID,
                     "evidence": "registration",
                 },
                 "configurational_energy_deciles": {
@@ -179,15 +184,17 @@ def test_model_provenance_and_compatibility_are_enforced():
         validate_protocol_configuration(config)
 
 
-def test_mixed_anion_precedence_must_be_a_complete_order():
+def test_anion_and_tm_resolutions_must_register_the_frozen_rules():
     config = _production_config()
-    config["protocol"]["scientific_resolutions"]["mixed_anion_family"]["precedence"] = [
-        "oxide",
-        "sulfide",
-    ]
-    with pytest.raises(ProtocolConfigurationError, match="order each frozen anion family"):
+    config["protocol"]["scientific_resolutions"]["mixed_anion_family"]["rule_id"] = "custom"
+    with pytest.raises(ProtocolConfigurationError, match="frozen rule dominant-anion"):
         validate_protocol_configuration(config)
-
+    config = _production_config()
+    config["protocol"]["scientific_resolutions"]["primary_tm_hubbard_u"]["excluded_elements"] = [
+        "Fe"
+    ]
+    with pytest.raises(ProtocolConfigurationError, match="frozen rule pymatgen"):
+        validate_protocol_configuration(config)
 
 def test_synthetic_mode_is_explicitly_nonproduction():
     config = _production_config()
@@ -227,7 +234,7 @@ def test_deleting_or_unblocking_a_required_item_does_not_clear_it():
         validate_protocol_configuration(config)
     config = _production_config()
     for item in config["protocol"]["unresolved_items"]:
-        if item["id"] == "preregistration_record":
+        if item["id"] == "s_host_definition":
             item.pop("resolution")
-    with pytest.raises(ProtocolConfigurationError, match="unresolved: preregistration_record"):
+    with pytest.raises(ProtocolConfigurationError, match="unresolved: s_host_definition"):
         validate_protocol_configuration(config)

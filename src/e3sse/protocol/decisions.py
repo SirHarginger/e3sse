@@ -62,7 +62,6 @@ PROTOCOL_ITEM_CATEGORIES: dict[str, str] = {
     "model_checkpoint_and_reference_compatibility_resolution": (
         "requires_preanalysis_scientific_decision"
     ),
-    "preregistration_record": "resolve_from_production_artifact",
     "fpmd_transport_reference_recoverability": "study3_only",
     "group_c_fine_tuned_comparator": "optional_later",
 }
@@ -262,6 +261,40 @@ DECISION_REGISTER: tuple[dict[str, str], ...] = (
     {"id": "base_seed_fixed_in_git", "classification": "engineering_choice",
      "source": "configs/protocol_freeze.json", "statement": "partition_base_seed 2026 is "
      "committed before any production materialization; any change is a recorded deviation"},
+    {"id": "tm_hubbard_u_element_rule", "classification": "engineering_choice",
+     "source": "src/e3sse/protocol/chemistry.py", "statement": "primary exclusion = pymatgen "
+     "is_transition_metal set union MP2020 Hubbard-U elements (operationalises Research "
+     "Design 5.3); f-block exclusion is a pre-specified sensitivity"},
+    {"id": "anion_family_dominant_count_rule", "classification": "engineering_choice",
+     "source": "src/e3sse/protocol/chemistry.py", "statement": "anion family by strictly "
+     "dominant atom count over oxide/sulfide/halide/nitride element sets; ties and none -> "
+     "other"},
+    {"id": "study5_excludes_partition_universe", "classification": "engineering_choice",
+     "source": "src/e3sse/protocol/partitions.py", "statement": "conservative reading of "
+     "Research Design 5.4: Study 5 excludes every chemical system of the partition universe"},
+    {"id": "pilot_tuning_outcome_allowlist", "classification": "engineering_choice",
+     "source": "src/e3sse/protocol/contracts.py", "statement": "tuning may use only "
+     "published-train MPLiTrj non-path DFT frame labels; nebDFT2k barriers need the pilot "
+     "amendment and serve preregistered analysis only"},
+    {"id": "canonical_mlip_adapter", "classification": "engineering_choice",
+     "source": "src/e3sse/protocol/adapters.py", "statement": "ASE adapters with explicit "
+     "unit options (matgl stress_unit eV/A3, CHGNet stress_weight, MACE float64) and a "
+     "synthetic unit smoke test before any production inference"},
+    {"id": "frozen_model_registry", "classification": "engineering_choice",
+     "source": "configs/protocol_freeze.json", "statement": "Group A frozen to the LiTraj "
+     "benchmark identities; B1 M3GNet-MatPES-PBE-v2025.1-PES; B2 SevenNet-omat (open "
+     "licence, Group-A architecture family)"},
+    {"id": "registration_after_freeze", "classification": "paper_specified",
+     "source": f"{_D} 4, 7", "statement": "hypotheses are registered on OSF before test-split "
+     "outcomes are inspected; the OSF record is a registration addendum bound to the frozen "
+     "protocol ID and file hash, never part of the protocol content, and it gates outcome "
+     "access rather than the freeze"},
+    {"id": "label_budget_exact_k_support", "classification": "engineering_choice",
+     "source": "src/e3sse/protocol/contracts.py", "statement": "for the paper-specified K set "
+     "(label_budget_k_values, Research Design 3.6) each label-budget estimate uses exactly K "
+     "frames from a frozen material-scope population and is exempt from the frozen "
+     "estimator_minimum_support thresholds (which the contract reads from the protocol); "
+     "leakage, provenance and force-validity checks are identical at every K"},
     {"id": "candidate_before_freeze", "classification": "engineering_choice",
      "source": "src/e3sse/protocol/freeze.py", "statement": "production runs with blocking "
      "items materialize a sealed candidate_unfrozen protocol listing freeze_blockers"},

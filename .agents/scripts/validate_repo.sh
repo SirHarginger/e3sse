@@ -14,10 +14,19 @@ else
     echo "==> Ruff not installed; skipping"
 fi
 
-if command -v pytest >/dev/null 2>&1 && \
+if python -m pytest --version >/dev/null 2>&1 && \
    find tests -type f -name 'test_*.py' -print -quit | grep -q .; then
+    # Runtime dependencies from pyproject.toml; fail clearly instead of with
+    # opaque "No module named ..." collection errors.
+    if ! python -c "import ase, numpy, pandas, yaml" >/dev/null 2>&1; then
+        echo "ERROR: $(command -v python) lacks the project dependencies" \
+             "(ase, numpy, pandas, pyyaml)." >&2
+        echo "Activate the repository environment first, e.g." \
+             "'source .venv/bin/activate' or 'pip install -e \".[dev]\"'." >&2
+        exit 1
+    fi
     echo "==> Pytest"
-    pytest -q
+    python -m pytest -q
 else
     echo "==> No runnable pytest suite yet; skipping"
 fi

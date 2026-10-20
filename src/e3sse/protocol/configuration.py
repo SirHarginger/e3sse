@@ -15,6 +15,11 @@ from typing import Any
 
 from ase.data import atomic_numbers
 
+from .chemistry import (
+    ANION_FAMILY_RULE_ID,
+    TM_RULE_ID,
+    primary_exclusion_elements,
+)
 from .contracts import (
     CANONICAL_UNITS,
     MODEL_PROVENANCE_REQUIRED_FIELDS,
@@ -44,7 +49,7 @@ _COMPATIBILITY_FIELDS = (
 )
 _RESOLUTION_FIELDS: dict[str, tuple[str, ...]] = {
     "primary_tm_hubbard_u": ("predicate_id", "excluded_elements"),
-    "mixed_anion_family": ("precedence",),
+    "mixed_anion_family": ("rule_id",),
     "configurational_energy_deciles": (
         "energy_reference",
         "fit_population",
@@ -123,7 +128,12 @@ def _validate_template_units(protocol: Mapping[str, Any]) -> None:
             record.get("production_source_unit_evidence"),
             f"unit_contract.{name}.production_source_unit_evidence",
         )
-        if evidence.get("status") not in {"unresolved", "verified", "not_retained"}:
+        if evidence.get("status") not in {
+            "unresolved",
+            "verified",
+            "not_retained",
+            "deferred_study3",
+        }:
             raise ProtocolConfigurationError(f"unit_contract.{name} has invalid status")
 
 
@@ -254,19 +264,21 @@ def _validate_resolution(name: str, record: Mapping[str, Any]) -> None:
                 raise ProtocolConfigurationError(
                     "primary_tm_hubbard_u.excluded_elements must list unique element symbols"
                 )
+            if sorted(value) != primary_exclusion_elements() or record.get(
+                "predicate_id"
+            ) != TM_RULE_ID:
+                raise ProtocolConfigurationError(
+                    f"primary_tm_hubbard_u must register the frozen rule {TM_RULE_ID}"
+                )
         elif field == "repeat_count":
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise ProtocolConfigurationError(
                     "label_budget_stability.repeat_count must be a positive integer"
                 )
-        elif field == "precedence":
-            if (
-                not isinstance(value, list)
-                or len(value) != len(set(value))
-                or set(value) != _ANION_FAMILIES
-            ):
+        elif field == "rule_id" and name == "mixed_anion_family":
+            if value != ANION_FAMILY_RULE_ID:
                 raise ProtocolConfigurationError(
-                    "mixed_anion_family.precedence must order each frozen anion family once"
+                    f"mixed_anion_family.rule_id must be the frozen rule {ANION_FAMILY_RULE_ID}"
                 )
         elif not _nonempty(value):
             raise ProtocolConfigurationError(

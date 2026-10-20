@@ -72,13 +72,20 @@ def frozen_universe(records):
 
     import hashlib
     import json
+    from pathlib import Path
 
     membership = [{field: record.get(field) for field in _FROZEN_FIELDS} for record in records]
     digest = hashlib.sha256(
         json.dumps(membership, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+    config = json.loads(Path("configs/protocol_freeze.json").read_text(encoding="utf-8"))
+    support = next(
+        item for item in config["protocol"]["unresolved_items"]
+        if item["id"] == "estimator_minimum_support"
+    )
     protocol = {
         "protocol_id": "f" * 64,
+        "unresolved_items": [support],
         "partition_definition": {
             "partition_universe": {"membership_sha256": digest},
             "repeated_partitions": {

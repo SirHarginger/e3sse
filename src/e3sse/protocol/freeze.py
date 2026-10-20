@@ -25,6 +25,7 @@ from e3sse.data.litraj_provenance import parse_edge_id
 from e3sse.data.mplitrj_provenance import SCHEMA_VERSION as PROVENANCE_SCHEMA
 from e3sse.data.mplitrj_provenance import material_bucket
 
+from .chemistry import ANION_FAMILY_RULE_ID, anion_family, composition_counts
 from .configuration import (
     ProtocolConfigurationError,
     ProtocolConfigurationValidation,
@@ -353,7 +354,7 @@ def _material_systems_from_index(
     expected_sha256: str | None,
     provenance: Mapping[str, Any],
     provenance_sha: str,
-) -> tuple[dict[str, str], str]:
+) -> tuple[dict[str, str], str, dict[str, dict[str, int]]]:
     digest = _expect_hash(path, expected_sha256, "material/chemical-system linkage")
     payload = _load_json(path)
     if payload.get("schema_version") != "e3sse.material-chemical-system.v1":
@@ -370,13 +371,19 @@ def _material_systems_from_index(
     if payload.get("flattened_source_sha256") != expected_sources:
         raise ProtocolFreezeError("chemical-system linkage source hashes differ")
     result: dict[str, str] = {}
+    compositions: dict[str, dict[str, int]] = {}
     for record in payload.get("materials", []):
         material = record.get("material_id")
         system = normalize_chemical_system(record.get("chemical_system_id", ""))
         if not material or (material in result and result[material] != system):
             raise ProtocolFreezeError("missing or conflicting material chemical system")
         result[material] = system
-    return result, digest
+        if isinstance(record.get("composition"), Mapping):
+            composition = {str(k): int(v) for k, v in sorted(record["composition"].items())}
+            if normalize_chemical_system(list(composition)) != system:
+                raise ProtocolFreezeError(f"composition contradicts chemical system: {material}")
+            compositions[material] = composition
+    return result, digest, compositions
 
 
 def _derive_material_systems(
@@ -388,6 +395,7 @@ def _derive_material_systems(
     expected_by_frame = {record["derived_frame_id"]: record for record in records}
     systems: dict[str, str] = {}
     counts: Counter[str] = Counter()
+    compositions: dict[str, dict[str, int]] = {}
     for source in manifest["flattened_sources"]:
         path = (data_root / source["identifier"]).resolve()
         try:
@@ -410,15 +418,24 @@ def _derive_material_systems(
                 raise ProtocolFreezeError(f"conflicting chemical systems for {material}")
             systems[material] = system
             counts[material] += 1
+            # Composition of the material's largest frame (Li vacancies only change Li).
+            composition = composition_counts(atoms.get_chemical_symbols())
+            if sum(composition.values()) > sum(compositions.get(material, {}).values()):
+                compositions[material] = composition
             seen += 1
         if seen != source["frames"]:
             raise ProtocolFreezeError(f"frame count mismatch for {source['identifier']}")
     if set(systems) != {record["material_id"] for record in records}:
         raise ProtocolFreezeError("material/chemical-system linkage is incomplete")
     identity = canonical_sha256(
-        {"algorithm": CHEMICAL_SYSTEM_ALGORITHM, "systems": systems, "frame_counts": counts}
+        {
+            "algorithm": CHEMICAL_SYSTEM_ALGORITHM,
+            "systems": systems,
+            "frame_counts": counts,
+            "compositions": compositions,
+        }
     )
-    return systems, identity
+    return systems, identity, compositions
 
 
 def _link_records(
@@ -686,8 +703,9 @@ def _protocol_content(
             },
             "inputs": "DFT and ML Cartesian force components only; DFT energies enter only "
             "through the registered configurational-energy decile rule",
-            "s_host_definition": "unresolved: s_host_definition",
-            "minimum_support": "unresolved: estimator_minimum_support",
+            "s_bar_definition": _register_resolution(config, "s_bar_definition"),
+            "s_host_definition": _register_resolution(config, "s_host_definition"),
+            "minimum_support": _register_resolution(config, "estimator_minimum_support"),
             "softening_resolution_levels": ["global", "family", "material", "element"],
             "secondary_groupings": ["configurational_energy_decile"],
             "element_resolved_component_rule": (
@@ -704,13 +722,16 @@ def _protocol_content(
             "label_budget_subsampling": {
                 "status": "contract_only_not_executed",
                 "sampling_unit": "whole_frame",
-                "population": "leakage-admissible frames of the estimator scope and target",
+                "estimator_scope": "material",
+                "population": "label_budget_stability.population_rule, derived by "
+                "contracts.validate_softening_support from forces of every eligible frame",
                 "draw": "K frames uniformly at random without replacement per repeat",
-                "insufficient_population": "record and skip; never sample with replacement",
+                "insufficient_population": "hop absent from the frozen hop set "
+                "(label_budget_stability.hop_set_rule); the contract raises if reached; "
+                "never sample with replacement",
                 "seed_key": [
                     "base_seed",
                     "study1_label_budget",
-                    "model_id",
                     "estimator_scope",
                     "scope_target",
                     "target_hop_id",
@@ -769,8 +790,12 @@ def _protocol_content(
             "alpha": [0.1, 0.2],
             "threshold_eV": [0.3, 0.5],
             "recorded": ["false_discovery_proportion", "true_discoveries", "selection_size"],
-            "realised_fdr": "mean FDP with Monte Carlo standard error (definition unresolved)",
-            "predictor_calibration_independence": "unresolved",
+            "realised_fdr_and_mc_se": _register_resolution(
+                config, "g4_monte_carlo_standard_error_definition"
+            ),
+            "predictor_calibration_independence": _register_resolution(
+                config, "study4_predictor_calibration_independence"
+            ),
         },
         "study_5_contract": {
             "source": "Research Design 5.10 Table 8",
@@ -804,7 +829,10 @@ def _protocol_content(
                 "fixed without calibration or test outcomes (Research Design 3.8); how pooled "
                 "s satisfies this is study4_predictor_calibration_independence"
             ),
-            "published_validation_split": "unresolved: published_validation_split_role",
+            "published_validation_split": _register_resolution(
+                config, "published_validation_split_role"
+            ),
+            "pilot_boundary": _register_resolution(config, "repeated_test_pilot_overlap_rule"),
         },
         "hypotheses": {
             "source": "Research Design 4 Table 4",
@@ -900,9 +928,8 @@ def _protocol_content(
             "study_3": "paired_sign_test_and_effect_size_with_material_cluster_uncertainty",
             "realized_fdr": "mean_FDP_over_200_draws_with_Monte_Carlo_standard_error",
             # Jin-Candes validity needs a predictor fixed independently of calibration and
-            # test outcomes; pooled s fitted on the calibration side is not yet registered
-            # as satisfying this (unresolved: study4_predictor_calibration_independence).
-            "fixed_predictor_before_calibration": "unresolved",
+            # test outcomes; see study4_predictor_calibration_independence.
+            "fixed_predictor_before_calibration": "study4_predictor_calibration_independence",
             "paired_identical_units": True,
             "primary_selection": "Benjamini_Hochberg_with_monotone_conformal_score",
             "exchangeability_assumption": "jointly_exchangeable_calibration_and_test_chemical_system_units",
@@ -1011,14 +1038,14 @@ def materialize_protocol(
 
     linkage_spec = config["inputs"].get("material_chemical_system_linkage")
     if linkage_spec:
-        systems, linkage_sha = _material_systems_from_index(
+        systems, linkage_sha, compositions = _material_systems_from_index(
             _resolve(base, linkage_spec["path"]),
             linkage_spec.get("sha256"),
             provenance,
             provenance_sha,
         )
     else:
-        systems, linkage_sha = _derive_material_systems(
+        systems, linkage_sha, compositions = _derive_material_systems(
             server_config, provenance, provenance_records
         )
     provenance_materials = {record["material_id"] for record in provenance_records}
@@ -1068,18 +1095,56 @@ def materialize_protocol(
         population = classify_primary_population(
             universe_systems, tm_resolution["excluded_elements"]
         )
+        neb_rows = [row for row in partition_records if row["record_kind"] == "nebdft2k_hop"]
         primary_population = {
             "status": "resolved",
             "predicate_id": tm_resolution["predicate_id"],
             "excluded_elements": sorted(tm_resolution["excluded_elements"]),
             "assignment_by_chemical_system": population,
             "counts": dict(sorted(Counter(population.values()).items())),
+            # Identifier-only counts; no barrier or other outcome is read.
+            "nebdft2k_hop_counts_by_published_split": {
+                split: dict(
+                    sorted(
+                        Counter(
+                            population[row["chemical_system_id"]]
+                            for row in neb_rows
+                            if row["published_split"] == split
+                        ).items()
+                    )
+                )
+                for split in ("train", "val", "test")
+            },
         }
     else:
         primary_population = {
             "status": "unresolved",
             "reason": "TM/Hubbard-U element set is not registered; no system is classified",
         }
+    anion_resolution = config["protocol"]["scientific_resolutions"]["mixed_anion_family"]
+    families = {material: anion_family(counts) for material, counts in compositions.items()}
+    family_by_system: dict[str, set[str]] = defaultdict(set)
+    for material, family in families.items():
+        family_by_system[systems[material]].add(family)
+    anion_families = {
+        "status": (
+            anion_resolution.get("status")
+            if set(compositions) == set(systems)
+            else "incomplete_composition"
+        ),
+        "rule_id": ANION_FAMILY_RULE_ID,
+        "assignment_by_material": dict(sorted(families.items())),
+        "material_counts": dict(sorted(Counter(families.values()).items())),
+        "chemical_system_counts": dict(
+            sorted(
+                Counter(
+                    next(iter(found)) if len(found) == 1 else "multiple_families"
+                    for found in family_by_system.values()
+                ).items()
+            )
+        ),
+        "materials_without_composition": sorted(set(systems) - set(compositions)),
+    }
     partition_manifest = {
         "schema_version": "e3sse.partition.manifest.v1",
         "linkage_sha256": linkage_sha,
@@ -1088,6 +1153,7 @@ def materialize_protocol(
         "published_split": published,
         "repeated_partitions": repeated,
         "primary_population": primary_population,
+        "anion_families": anion_families,
         "nebdft2k_source_columns": neb_linkage_payload.get("source_columns"),
         "linkage_validation": {
             "frames": len(linked),
@@ -1102,7 +1168,9 @@ def materialize_protocol(
         },
     }
     partition_manifest["manifest_id"] = canonical_sha256(partition_manifest)
-    exclusions = derive_study5_exclusions(published["test_chemical_systems"], repeated)
+    exclusions = derive_study5_exclusions(
+        published["test_chemical_systems"], repeated, universe_systems
+    )
     exclusions["source_partition_manifest_id"] = partition_manifest["manifest_id"]
     exclusions["included_partitions"] = [
         "published_test",
@@ -1126,6 +1194,11 @@ def materialize_protocol(
         config=config,
     )
     blockers = list(configuration_state.freeze_blockers)
+    missing_compositions = anion_families["materials_without_composition"]
+    if missing_compositions:
+        blockers.append(
+            f"anion family undetermined: {len(missing_compositions)} materials lack composition"
+        )
     production_eligible = production_mode and not blockers
     protocol["materialization_mode"] = configuration_state.materialization_mode
     protocol["production_eligible"] = production_eligible

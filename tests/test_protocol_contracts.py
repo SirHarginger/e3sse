@@ -17,6 +17,7 @@ from e3sse.protocol.contracts import (
     validate_inference_run_manifest,
     validate_model_provenance,
 )
+from e3sse.protocol.registration import build_registration_addendum
 
 
 def _model() -> dict:
@@ -217,25 +218,65 @@ def test_nontraining_outcome_access_requires_a_complete_validated_freeze():
             frozen_protocol={"protocol_id": "not-a-freeze"},
         )
     protocol = _frozen_protocol()
-    with pytest.raises(OutcomeAccessDenied, match="pilot amendment"):
+    with pytest.raises(OutcomeAccessDenied, match="registered on OSF"):
         require_outcome_access(role="test", outcome="barrier_mae", frozen_protocol=protocol)
     amendment = build_pilot_amendment(
         protocol,
         partition_records=_MEMBERSHIP,
         training_unit_ids=["hop-train"],
-        frozen_thresholds={"c_eV": [0.3, 0.5]},
-        mde_analysis={"status": "reported"},
+        frozen_thresholds={"study1_decile_count": 10},
+        mde_analysis={"study2_mde_eV": "reported"},
     )
     with pytest.raises(ValueError, match="published training split"):
         build_pilot_amendment(
             protocol,
             partition_records=_MEMBERSHIP,
             training_unit_ids=["hop-test"],
-            frozen_thresholds={"c_eV": [0.3]},
-            mde_analysis={"status": "reported"},
+            frozen_thresholds={"study1_decile_count": 10},
+            mde_analysis={"study2_mde_eV": "reported"},
+        )
+    registered = build_registration_addendum(
+        protocol,
+        status="registered",
+        osf_registration_id="fixture12",
+        submitted_at_utc="2026-11-02T09:00:00Z",
+        visibility="embargoed",
+        pilot_amendment_id=amendment["amendment_id"],
+    )
+    initial = build_registration_addendum(
+        protocol,
+        status="registered",
+        osf_registration_id="fixture12",
+        submitted_at_utc="2026-10-20T09:00:00Z",
+        visibility="embargoed",
+    )
+    with pytest.raises(OutcomeAccessDenied, match="pilot amendment"):
+        require_outcome_access(
+            role="test", outcome="barrier_mae", frozen_protocol=protocol,
+            registration_addendum=initial,
+        )
+    submitted_update = build_registration_addendum(
+        protocol,
+        status="submitted",
+        submitted_at_utc="2026-11-02T09:00:00Z",
+        pilot_amendment_id=amendment["amendment_id"],
+    )
+    with pytest.raises(OutcomeAccessDenied, match="registered on OSF"):
+        require_outcome_access(
+            role="test", outcome="barrier_mae", frozen_protocol=protocol,
+            pilot_amendment=amendment, registration_addendum=submitted_update,
+        )
+    with pytest.raises(OutcomeAccessDenied, match="OSF update"):
+        require_outcome_access(
+            role="test", outcome="barrier_mae", frozen_protocol=protocol,
+            pilot_amendment=amendment, registration_addendum=initial,
         )
     require_outcome_access(
-        role="test", outcome="barrier_mae", frozen_protocol=protocol, pilot_amendment=amendment
+        role="test",
+        outcome="barrier_mae",
+        frozen_protocol=protocol,
+        pilot_amendment=amendment,
+        registration_addendum=registered,
     )
     forged = {**amendment, "data_roles": ["train", "test"]}
     with pytest.raises(OutcomeAccessDenied):

@@ -26,6 +26,7 @@ from e3sse.protocol.partitions import (
     derive_study5_exclusions,
     normalize_chemical_system,
 )
+from e3sse.protocol.registration import build_registration_addendum
 
 _ELEMENTS = ["O", "S", "Cl", "N", "F", "P", "Br", "I", "Se", "B", "Si", "Ge", "Al"]
 
@@ -107,22 +108,25 @@ def test_ten_grouped_partitions_are_exact_inherited_and_seed_frozen():
         build_repeated_partitions(rows, base_seed=2026, test_fraction=0.3)
 
 
-def test_study5_exclusions_require_explicit_complete_inputs():
+def test_study5_excludes_the_whole_partition_universe():
     rows = _universe()
+    universe = sorted({row["chemical_system_id"] for row in rows})
     repeated = build_repeated_partitions(rows, base_seed=1)
     published = ["Li-O", "Li-S"]
-    result = derive_study5_exclusions(published, repeated)
-    expected = set(published).union(*(set(r["test_chemical_systems"]) for r in repeated["partitions"]))
-    assert set(result["chemical_system_ids"]) == expected
+    result = derive_study5_exclusions(published, repeated, universe)
+    union = set(published).union(*(set(r["test_chemical_systems"]) for r in repeated["partitions"]))
+    assert union <= set(result["chemical_system_ids"]) == set(universe)
+    assert result["rule"] == "entire-partition-universe-v1"
     assert result["candidate_pool_inspected"] is False
     with pytest.raises(ValueError, match="non-empty"):
-        derive_study5_exclusions([], repeated)
+        derive_study5_exclusions([], repeated, universe)
     with pytest.raises(TypeError):
-        derive_study5_exclusions("Li-O", repeated)
+        derive_study5_exclusions("Li-O", repeated, universe)
+    with pytest.raises(ValueError, match="outside the partition universe"):
+        derive_study5_exclusions(published, repeated, universe[:3])
     truncated = {**repeated, "partitions": repeated["partitions"][:9]}
     with pytest.raises(ValueError, match="incomplete"):
-        derive_study5_exclusions(published, truncated)
-
+        derive_study5_exclusions(published, truncated, universe)
 
 def test_primary_population_requires_a_registered_element_set():
     population = classify_primary_population(["Li-O", "Fe-Li-O-P", "Li-S"], ["Fe", "Mn"])
@@ -243,6 +247,14 @@ def _production_fixture(tmp_path: Path, *, complete: bool) -> Path:
     config = json.loads(config_path.read_text())
     config["materialization_mode"] = "production"
     if complete:
+        # A complete linkage carries each material's composition (anion families).
+        linkage_path = Path(config["inputs"]["material_chemical_system_linkage"]["path"])
+        linkage = json.loads(linkage_path.read_text())
+        for record in linkage["materials"]:
+            elements = record["chemical_system_id"].split("-")
+            record["composition"] = {element: 1 for element in elements}
+        _write(linkage_path, linkage)
+        config["inputs"]["material_chemical_system_linkage"]["sha256"] = _sha(linkage_path)
         reference = _production_config()["protocol"]
         config["inputs"]["repository_git_sha"] = "a" * 40
         config["protocol"]["scientific_resolutions"] = reference["scientific_resolutions"]
@@ -314,38 +326,158 @@ def test_complete_production_freeze_opens_only_preregistered_static_outcomes(
         {row["hop_id"] for row in membership if row["published_split"] == "train"}
     )
     test_hops = sorted({row["hop_id"] for row in membership if row["published_split"] == "test"})
+    nonpath_frames = [
+        row["frame_id"]
+        for row in membership
+        if row.get("frame_id") and row.get("raw_file_kind") == "source"
+    ]
+    assert nonpath_frames
+    # Registration gates every outcome, training included (Research Design 4, 5.1, 8).
+    with pytest.raises(OutcomeAccessDenied, match="registered on OSF"):
+        require_outcome_access(
+            role="train",
+            outcome="pilot",
+            frozen_protocol=protocol,
+            purpose="threshold_selection",
+            partition_records=membership,
+            unit_ids=nonpath_frames,
+            outcome_kind="mplitrj_nonpath_dft_force",
+        )
+    registered = build_registration_addendum(
+        protocol,
+        status="registered",
+        osf_registration_id="fixture12",
+        submitted_at_utc="2026-10-20T09:00:00Z",
+        visibility="embargoed",
+    )
     # Seal 1: training outcomes need the freeze and verified membership, not a declared role.
     require_outcome_access(
         role="train",
         outcome="pilot",
         frozen_protocol=protocol,
+        registration_addendum=registered,
         purpose="threshold_selection",
         partition_records=membership,
-        unit_ids=train_hops,
+        unit_ids=nonpath_frames,
+        outcome_kind="mplitrj_nonpath_dft_force",
     )
+    # A permitted label cannot smuggle hops or path frames into tuning.
+    path_frames = [r["frame_id"] for r in membership if r.get("raw_file_kind") == "band_optim_step"]
+    train_path = [f for f in path_frames if f.startswith("MPLiTrj_train")]
+    for units in (train_hops, train_path):
+        if not units:
+            continue
+        with pytest.raises(OutcomeAccessDenied, match="non-path frames"):
+            require_outcome_access(
+                role="train",
+                outcome="pilot",
+                frozen_protocol=protocol,
+                registration_addendum=registered,
+                purpose="method_tuning",
+                partition_records=membership,
+                unit_ids=units,
+                outcome_kind="mplitrj_nonpath_dft_energy",
+            )
+    # Hop units imply barriers: no amendment, no access, whatever the label says.
+    with pytest.raises(OutcomeAccessDenied, match="pilot amendment"):
+        require_outcome_access(
+            role="train",
+            outcome="anything",
+            frozen_protocol=protocol,
+            registration_addendum=registered,
+            partition_records=membership,
+            unit_ids=train_hops,
+        )
+    # nebDFT2k barriers are never tuning inputs, even for published-train hops.
+    for kind in ("nebdft2k_barrier_em_dft", None, "mplitrj_path_dft_energy"):
+        with pytest.raises(OutcomeAccessDenied, match="may use only"):
+            require_outcome_access(
+                role="train",
+                outcome="pilot",
+                frozen_protocol=protocol,
+                registration_addendum=registered,
+                purpose="threshold_selection",
+                partition_records=membership,
+                unit_ids=nonpath_frames,
+                outcome_kind=kind,
+            )
+    with pytest.raises(ValueError, match="only Study 1/2"):
+        build_pilot_amendment(
+            protocol,
+            partition_records=membership,
+            training_unit_ids=nonpath_frames,
+            frozen_thresholds={"study4_alpha": 0.1},
+            mde_analysis={"study2_mde_eV": "reported"},
+        )
     for units, records in ((test_hops, membership), (train_hops, membership[:-1]), (None, None)):
         with pytest.raises(OutcomeAccessDenied):
             require_outcome_access(
                 role="train",
                 outcome="pilot",
                 frozen_protocol=protocol,
+                registration_addendum=registered,
                 partition_records=records,
                 unit_ids=units,
             )
+    # Published-train barriers (recalibration comparator) need the pilot amendment.
+    with pytest.raises(OutcomeAccessDenied, match="pilot amendment"):
+        require_outcome_access(
+            role="train",
+            outcome="recalibration_fit",
+            frozen_protocol=protocol,
+            registration_addendum=registered,
+            partition_records=membership,
+            unit_ids=train_hops,
+            outcome_kind="nebdft2k_barrier_em_dft",
+        )
     # Seal 2: test outcomes need the training-only pilot amendment as well.
     with pytest.raises(OutcomeAccessDenied, match="pilot amendment"):
-        require_outcome_access(role="test", outcome="stage2a_rho_srt", frozen_protocol=protocol)
+        require_outcome_access(
+            role="test",
+            outcome="stage2a_rho_srt",
+            frozen_protocol=protocol,
+            registration_addendum=registered,
+        )
     amendment = build_pilot_amendment(
         protocol,
         partition_records=membership,
         training_unit_ids=train_hops,
-        frozen_thresholds={"c_eV": [0.3, 0.5]},
-        mde_analysis={"status": "reported"},
+        frozen_thresholds={"study1_decile_count": 10},
+        mde_analysis={"study2_mde_eV": "reported"},
+    )
+    # The initial registration predates the pilot: test outcomes need the OSF update
+    # that deposits this exact pilot amendment.
+    with pytest.raises(OutcomeAccessDenied, match="OSF update"):
+        require_outcome_access(
+            role="test",
+            outcome="stage2a_rho_srt",
+            frozen_protocol=protocol,
+            pilot_amendment=amendment,
+            registration_addendum=registered,
+        )
+    registered = build_registration_addendum(
+        protocol,
+        status="registered",
+        osf_registration_id="fixture12",
+        submitted_at_utc="2026-11-02T09:00:00Z",
+        visibility="embargoed",
+        pilot_amendment_id=amendment["amendment_id"],
     )
     require_outcome_access(
         role="test",
         outcome="stage2a_rho_srt",
         frozen_protocol=protocol,
+        pilot_amendment=amendment,
+        registration_addendum=registered,
+    )
+    require_outcome_access(
+        role="train",
+        outcome="recalibration_fit",
+        frozen_protocol=protocol,
+        registration_addendum=registered,
+        partition_records=membership,
+        unit_ids=train_hops,
+        outcome_kind="nebdft2k_barrier_em_dft",
         pilot_amendment=amendment,
     )
     for purpose in ("threshold_selection", "method_tuning", "hyperparameter_selection"):
@@ -355,7 +487,9 @@ def test_complete_production_freeze_opens_only_preregistered_static_outcomes(
                 outcome="barrier_mae",
                 frozen_protocol=protocol,
                 pilot_amendment=amendment,
+                registration_addendum=registered,
                 purpose=purpose,
+                outcome_kind="mplitrj_nonpath_dft_force",
             )
     # Study 3: transport readiness is a separate addendum bound to the static protocol.
     with pytest.raises(OutcomeAccessDenied, match="transport addendum"):
@@ -364,6 +498,7 @@ def test_complete_production_freeze_opens_only_preregistered_static_outcomes(
             outcome="log10_D",
             frozen_protocol=protocol,
             pilot_amendment=amendment,
+            registration_addendum=registered,
         )
     audit_path = tmp_path / "g0" / "audit.json"
     partial = build_transport_addendum(protocol, g0_audit_path=audit_path)
@@ -375,6 +510,7 @@ def test_complete_production_freeze_opens_only_preregistered_static_outcomes(
             outcome="log10_D",
             frozen_protocol=protocol,
             pilot_amendment=amendment,
+            registration_addendum=registered,
             transport_addendum=partial,
         )
     later_audit = json.loads(audit_path.read_text())
@@ -391,6 +527,7 @@ def test_complete_production_freeze_opens_only_preregistered_static_outcomes(
             outcome="log10_D",
             frozen_protocol=protocol,
             pilot_amendment=amendment,
+            registration_addendum=registered,
             transport_addendum=forged,
         )
     require_outcome_access(
@@ -398,6 +535,7 @@ def test_complete_production_freeze_opens_only_preregistered_static_outcomes(
         outcome="log10_D",
         frozen_protocol=protocol,
         pilot_amendment=amendment,
+        registration_addendum=registered,
         transport_addendum=ready,
     )
     with pytest.raises(OutcomeAccessDenied, match="purpose"):
@@ -435,6 +573,9 @@ def test_protocol_snapshot_records_contracts_and_content_identity(tmp_path):
     assert "repeat_fit_guard" in protocol["inference_roles"]
     assert protocol["study_1_contract"]["published_split"] == "train"
     assert protocol["study_1_contract"]["label_budget_k"] == [1, 3, 5, 10, 30]
+    subsampling = protocol["study_1_contract"]["label_budget_subsampling"]
+    assert subsampling["estimator_scope"] == "material"
+    assert "model_id" not in subsampling["seed_key"]  # common random numbers across models
     assert protocol["study_1_contract"]["production_inference_executed"] is False
     assert "created_at_utc" not in json.dumps(protocol)
     manifest = json.loads((path.parent / "run_manifest.json").read_text())
@@ -474,7 +615,7 @@ def test_transport_branch_is_blocked_when_fpmd_fails_g0(tmp_path):
     assert protocol["static_branch_status"] == "ready"
 
 
-def test_checked_in_template_assessment_reports_open_scientific_items():
+def test_checked_in_template_leaves_only_production_and_registration_blockers():
     from e3sse.protocol.configuration import assess_production_configuration
 
     template = json.loads(Path("configs/protocol_freeze.json").read_text(encoding="utf-8"))
@@ -482,22 +623,28 @@ def test_checked_in_template_assessment_reports_open_scientific_items():
     assert state.production_eligible is False
     joined = "\n".join(state.freeze_blockers)
     for item in (
-        "nebdft2k_convergence_flag_availability",
-        "transition_metal_hubbard_u_machine_predicate",
+        "repository_git_sha must be pinned",
+        "production source-unit evidence unresolved",
         "production_source_unit_evidence",
+        "nebdft2k_convergence_flag_availability",
     ):
         assert item in joined
-    for paper_item in (
-        "endpoint_origin_policy",
+    assert "preregistration" not in joined
+    for resolved in (
+        "transition_metal_hubbard_u_machine_predicate",
+        "mixed_anion_family",
+        "s_bar_definition",
+        "study4_predictor_calibration_independence",
+        "g4_monte_carlo_standard_error_definition",
+        "model_checkpoint",
         "fpmd_transport_reference_recoverability",
         "group_c_fine_tuned_comparator",
+        "ml_energy",
+        "temperature",
     ):
-        assert paper_item not in joined
-    assert "model_groups.C" not in joined
-
-
-# --- review regressions ----------------------------------------------------------------
-
+        assert resolved not in joined
+    units = template["protocol"]["unit_contract"]
+    assert units["temperature"]["production_source_unit_evidence"]["status"] == "deferred_study3"
 
 def test_inference_contract_rejects_per_atom_corrected_and_unpinned_predictions():
     from test_protocol_contracts import _record, _run_manifest

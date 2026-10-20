@@ -75,10 +75,10 @@
       "ml_energy": {
         "canonical_analysis_unit": "eV",
         "production_source_unit_evidence": {
-          "source_unit": null,
-          "conversion": null,
-          "status": "unresolved",
-          "evidence": null
+          "source_unit": "eV",
+          "conversion": "identity",
+          "status": "verified",
+          "evidence": "adapter e3sse-ase-adapter-v1 (src/e3sse/protocol/adapters.py) wraps each frozen checkpoint's ASE calculator with explicit unit options; smoke test e3sse-unit-smoke-v3 passed for all six checkpoints (extensive total energy, F = -dE/dx, eV/A^3 stress); reports are regenerated at the reviewed commit by scripts/smoke_test_models.py"
         }
       },
       "dft_force": {
@@ -93,10 +93,10 @@
       "ml_force": {
         "canonical_analysis_unit": "eV/angstrom",
         "production_source_unit_evidence": {
-          "source_unit": null,
-          "conversion": null,
-          "status": "unresolved",
-          "evidence": null
+          "source_unit": "eV/angstrom",
+          "conversion": "identity",
+          "status": "verified",
+          "evidence": "adapter e3sse-ase-adapter-v1 (src/e3sse/protocol/adapters.py) wraps each frozen checkpoint's ASE calculator with explicit unit options; smoke test e3sse-unit-smoke-v3 passed for all six checkpoints (extensive total energy, F = -dE/dx, eV/A^3 stress); reports are regenerated at the reviewed commit by scripts/smoke_test_models.py"
         }
       },
       "stress": {
@@ -122,139 +122,291 @@
         "production_source_unit_evidence": {
           "source_unit": null,
           "conversion": null,
-          "status": "unresolved",
-          "evidence": null
+          "status": "deferred_study3",
+          "evidence": "Studies 1, 2a and 4 use 0 K DFT-NEB data with no temperature; FPMD temperature unit evidence is required by the Study 3 transport addendum"
         }
       }
     },
     "model_groups": {
       "A": [
         {
+          "resolution_status": "resolved",
+          "license_verified": true,
+          "fine_tuned": false,
+          "adapter_version": "e3sse-ase-adapter-v1",
+          "energy_semantics": "total configuration energy in eV (smoke-tested extensive); uncorrected model-native, no MP2020 correction",
+          "force_semantics": "F = -dE/dx in eV/angstrom (smoke-tested by central differences)",
+          "stress_semantics": "ASE convention in eV/angstrom^3 (smoke-tested by finite strain); not used by Studies 1/2a/4",
           "paper_candidate": "CHGNet",
+          "canonical_name": "CHGNet-0.3.0",
+          "group": "A",
+          "architecture_family": "CHGNet (charge-informed GNN, 412,525 parameters, 6 A atom-graph cutoff)",
+          "pretraining_dataset": "MPtrj (Materials Project relaxation trajectories)",
+          "upstream": "https://github.com/CederGroupHub/chgnet",
+          "release_revision": "v0.3.0 (commit ee03e316a1fbc84fe6d9e0ae0215492a389bbe3f)",
+          "checkpoint_id": "chgnet_0.3.0_e29f68s314m37.pth.tar",
+          "checkpoint_url": "https://raw.githubusercontent.com/CederGroupHub/chgnet/v0.3.0/chgnet/pretrained/0.3.0/chgnet_0.3.0_e29f68s314m37.pth.tar",
+          "weights_sha256": "d14ab7c0f093efe64b60a7bcd540bca10e74fb7f46c86108a079af60524659d1",
+          "package_name": "chgnet",
+          "package_version": "0.3.0",
+          "adapter_name": "chgnet",
+          "load_options": {
+            "calculator": "chgnet.model.dynamics.CHGNetCalculator",
+            "stress_weight": "1/160.21766208"
+          },
+          "license_identifier": "BSD-3-Clause-LBNL (CHGNet modified BSD)",
+          "element_coverage": "94-element embedding; trained on 89 MPtrj elements",
+          "benchmark_identity": "LiTraj Methods: 'CHGNet (v0.3.0)'",
           "frozen_group": "A",
-          "resolution_status": "unresolved",
-          "required_before_freeze": [
-            "canonical_name",
-            "architecture_family",
-            "pretraining_dataset",
-            "upstream",
-            "release_revision",
-            "checkpoint_id",
-            "weights_sha256",
-            "package_name",
-            "package_version",
-            "adapter_name",
-            "adapter_version",
-            "load_options",
-            "license_identifier",
-            "license_verified",
-            "fine_tuned",
-            "reference_compatibility"
-          ],
-          "selected_implementation": null,
-          "concrete_checkpoint": null
+          "reference_compatibility": {
+            "target_functional": "PBE",
+            "target_hubbard_u_policy": "no_hubbard_u",
+            "target_spin_policy": "non_spin_polarized",
+            "target_evidence": "LiTraj scripts/ase_run_vasp.py@c3ca5c2: xc='PBE', ispin=1, no LDAU, encut 520, Gamma-only; Research Design Table 6",
+            "status": "compatible",
+            "primary_analysis_eligible": true,
+            "exclusion_reason": null,
+            "model_training_settings": "MPtrj: VASP PBE/PBE+U (MP2020 U for Co,Cr,Fe,Mn,Mo,Ni,V,W with O/F), spin-polarised",
+            "evidence": "primary population excludes transition-metal/Hubbard-U systems (Research Design 5.3), removing the PBE vs PBE+U mismatch; the remaining spin-polarisation difference for TM-free systems is a registered limitation"
+          }
         },
         {
+          "resolution_status": "resolved",
+          "license_verified": true,
+          "fine_tuned": false,
+          "adapter_version": "e3sse-ase-adapter-v1",
+          "energy_semantics": "total configuration energy in eV (smoke-tested extensive); uncorrected model-native, no MP2020 correction",
+          "force_semantics": "F = -dE/dx in eV/angstrom (smoke-tested by central differences)",
+          "stress_semantics": "ASE convention in eV/angstrom^3 (smoke-tested by finite strain); not used by Studies 1/2a/4",
           "paper_candidate": "M3GNet",
-          "frozen_group": "A",
-          "resolution_status": "unresolved",
-          "required_before_freeze": [
-            "canonical_name",
-            "architecture_family",
-            "pretraining_dataset",
-            "upstream",
-            "release_revision",
-            "checkpoint_id",
-            "weights_sha256",
-            "package_name",
-            "package_version",
-            "adapter_name",
-            "adapter_version",
-            "load_options",
-            "license_identifier",
-            "license_verified",
-            "fine_tuned",
-            "reference_compatibility"
+          "canonical_name": "M3GNet-MP-2021.2.8-PES",
+          "group": "A",
+          "architecture_family": "M3GNet (matgl DGL pre-v3 implementation; cutoff 5 A, three-body cutoff 4 A, 3 blocks, units 64)",
+          "pretraining_dataset": "MPF.2021.2.8 (Materials Project relaxations, ~188k structures)",
+          "upstream": "https://github.com/materialyzeai/matgl",
+          "release_revision": "matgl v1.2.7; weights byte-identical to v1.1.3 (git blobs 4b865b8887ce/b338630cfad1)",
+          "checkpoint_id": "pretrained_models/M3GNet-MP-2021.2.8-PES",
+          "checkpoint_url": "https://raw.githubusercontent.com/materialyzeai/matgl/v1.2.7/pretrained_models/M3GNet-MP-2021.2.8-PES/",
+          "weights_sha256": "a9aa723705bd1a242ec8749332f137811c4a94e17995a564f8f94a9aca68061b",
+          "artifact_files": {
+            "model.json": "05e7db8676ceb37eb07848aff49c556b188699e1035f3df0cbbf1a2c4959148f",
+            "model.pt": "62678f76fbc5d8997ea1d7f3c4bf086df200102125c802b32b08ce14fbcde25b",
+            "state.pt": "a9aa723705bd1a242ec8749332f137811c4a94e17995a564f8f94a9aca68061b"
+          },
+          "package_name": "matgl",
+          "package_version": "1.2.7",
+          "adapter_name": "matgl",
+          "load_options": {
+            "calculator": "matgl.ext.ase.PESCalculator",
+            "stress_unit": "eV/A3",
+            "backend": "DGL 2.1.0",
+            "torchdata": "0.7.1"
+          },
+          "license_identifier": "BSD-3-Clause",
+          "element_coverage": "89 elements (model element_types)",
+          "benchmark_identity": "LiTraj Methods: 'M3GNet (2021.2.8)'; LiTraj notebooks use matgl",
+          "limitations": [
+            "matgl v3.0.0 changed the message-passing convention and v4.1.0 fixed a three-body bug for threebody_cutoff < cutoff; this checkpoint is frozen with the self-consistent pre-v3 code it was trained with, matching the LiTraj benchmark",
+            "forces are not exactly -dE/dx: e3sse-unit-smoke-v3 finds a 3.6e-3 eV/A finite-difference mismatch that does not converge with step size or float64 (non-smooth energy from the pre-v3 three-body cutoff); units are verified; Eq. 17 uses the model's analytic forces exactly as LiTraj's benchmark did"
           ],
-          "selected_implementation": null,
-          "concrete_checkpoint": null
+          "frozen_group": "A",
+          "reference_compatibility": {
+            "target_functional": "PBE",
+            "target_hubbard_u_policy": "no_hubbard_u",
+            "target_spin_policy": "non_spin_polarized",
+            "target_evidence": "LiTraj scripts/ase_run_vasp.py@c3ca5c2: xc='PBE', ispin=1, no LDAU, encut 520, Gamma-only; Research Design Table 6",
+            "status": "compatible",
+            "primary_analysis_eligible": true,
+            "exclusion_reason": null,
+            "model_training_settings": "MPF.2021.2.8: Materials Project VASP PBE/PBE+U relaxations, spin-polarised",
+            "evidence": "primary population excludes transition-metal/Hubbard-U systems (Research Design 5.3), removing the PBE vs PBE+U mismatch; the remaining spin-polarisation difference for TM-free systems is a registered limitation"
+          }
         },
         {
+          "resolution_status": "resolved",
+          "license_verified": true,
+          "fine_tuned": false,
+          "adapter_version": "e3sse-ase-adapter-v1",
+          "energy_semantics": "total configuration energy in eV (smoke-tested extensive); uncorrected model-native, no MP2020 correction",
+          "force_semantics": "F = -dE/dx in eV/angstrom (smoke-tested by central differences)",
+          "stress_semantics": "ASE convention in eV/angstrom^3 (smoke-tested by finite strain); not used by Studies 1/2a/4",
           "paper_candidate": "MACE-MP-0 small",
-          "frozen_group": "A",
-          "resolution_status": "unresolved",
-          "required_before_freeze": [
-            "canonical_name",
-            "architecture_family",
-            "pretraining_dataset",
-            "upstream",
-            "release_revision",
-            "checkpoint_id",
-            "weights_sha256",
-            "package_name",
-            "package_version",
-            "adapter_name",
-            "adapter_version",
-            "load_options",
-            "license_identifier",
-            "license_verified",
-            "fine_tuned",
-            "reference_compatibility"
+          "canonical_name": "MACE-MP-0-small-2023-12-10",
+          "group": "A",
+          "architecture_family": "MACE (L0, 128 channels, 3,847,696 parameters, r_max 6 A)",
+          "pretraining_dataset": "MPtrj",
+          "upstream": "https://github.com/ACEsuit/mace-mp",
+          "release_revision": "release mace_mp_0; mace-torch 0.3.6",
+          "checkpoint_id": "2023-12-10-mace-128-L0_energy_epoch-249.model",
+          "checkpoint_url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/2023-12-10-mace-128-L0_energy_epoch-249.model",
+          "weights_sha256": "2ddb079cee0e131eaaf6912ba581b394551ead283e95c99cfe78c605d10b5736",
+          "package_name": "mace-torch",
+          "package_version": "0.3.6",
+          "adapter_name": "mace",
+          "load_options": {
+            "calculator": "mace.calculators.MACECalculator",
+            "default_dtype": "float64"
+          },
+          "license_identifier": "MIT",
+          "element_coverage": "89 elements",
+          "benchmark_identity": "LiTraj notebook nebDFT2k_benchmark_MACE_MP_small.ipynb calls mace_mp(model='small', default_dtype='float64'), which resolves to this file in mace-torch 0.3.4-0.3.8",
+          "limitations": [
+            "LiTraj Methods label this model '2023.12.03 ... 2.08 million parameters'; the file its code loads is 2023-12-10 with 3,847,696 parameters; frozen to the code-evidenced file"
           ],
-          "selected_implementation": null,
-          "concrete_checkpoint": null
+          "frozen_group": "A",
+          "reference_compatibility": {
+            "target_functional": "PBE",
+            "target_hubbard_u_policy": "no_hubbard_u",
+            "target_spin_policy": "non_spin_polarized",
+            "target_evidence": "LiTraj scripts/ase_run_vasp.py@c3ca5c2: xc='PBE', ispin=1, no LDAU, encut 520, Gamma-only; Research Design Table 6",
+            "status": "compatible",
+            "primary_analysis_eligible": true,
+            "exclusion_reason": null,
+            "model_training_settings": "MPtrj: VASP PBE/PBE+U, spin-polarised",
+            "evidence": "primary population excludes transition-metal/Hubbard-U systems (Research Design 5.3), removing the PBE vs PBE+U mismatch; the remaining spin-polarisation difference for TM-free systems is a registered limitation"
+          }
         },
         {
+          "resolution_status": "resolved",
+          "license_verified": true,
+          "fine_tuned": false,
+          "adapter_version": "e3sse-ase-adapter-v1",
+          "energy_semantics": "total configuration energy in eV (smoke-tested extensive); uncorrected model-native, no MP2020 correction",
+          "force_semantics": "F = -dE/dx in eV/angstrom (smoke-tested by central differences)",
+          "stress_semantics": "ASE convention in eV/angstrom^3 (smoke-tested by finite strain); not used by Studies 1/2a/4",
           "paper_candidate": "SevenNet-0",
+          "canonical_name": "SevenNet-0-11July2024",
+          "group": "A",
+          "architecture_family": "SevenNet/NequIP-type (lmax 2, 5 layers, cutoff 5 A, ~0.86M parameters)",
+          "pretraining_dataset": "MPtrj",
+          "upstream": "https://github.com/MDIL-SNU/SevenNet",
+          "release_revision": "sevenn 0.10.1 (released 2024-11-07)",
+          "checkpoint_id": "sevenn/pretrained_potentials/SevenNet_0__11July2024/checkpoint_sevennet_0.pth",
+          "checkpoint_url": "https://files.pythonhosted.org/packages/a0/fc/d070eca8f9897619218a1b2220ab059e78db393380041847bab936459a51/sevenn-0.10.1.tar.gz",
+          "weights_sha256": "7052cb42b7b3be42b40b97fa0d21077a48c54b5548948fc4dcf346629f813c36",
+          "package_name": "sevenn",
+          "package_version": "0.10.1",
+          "adapter_name": "sevennet",
+          "load_options": {
+            "calculator": "sevenn.sevennet_calculator.SevenNetCalculator"
+          },
+          "license_identifier": "MIT",
+          "element_coverage": "89 chemical species",
+          "benchmark_identity": "LiTraj Methods: 'SevenNet(2024.11.07)' = sevenn 0.10.1 release date; its default 7net-0 is SevenNet_0__11July2024",
           "frozen_group": "A",
-          "resolution_status": "unresolved",
-          "required_before_freeze": [
-            "canonical_name",
-            "architecture_family",
-            "pretraining_dataset",
-            "upstream",
-            "release_revision",
-            "checkpoint_id",
-            "weights_sha256",
-            "package_name",
-            "package_version",
-            "adapter_name",
-            "adapter_version",
-            "load_options",
-            "license_identifier",
-            "license_verified",
-            "fine_tuned",
-            "reference_compatibility"
-          ],
-          "selected_implementation": null,
-          "concrete_checkpoint": null
+          "reference_compatibility": {
+            "target_functional": "PBE",
+            "target_hubbard_u_policy": "no_hubbard_u",
+            "target_spin_policy": "non_spin_polarized",
+            "target_evidence": "LiTraj scripts/ase_run_vasp.py@c3ca5c2: xc='PBE', ispin=1, no LDAU, encut 520, Gamma-only; Research Design Table 6",
+            "status": "compatible",
+            "primary_analysis_eligible": true,
+            "exclusion_reason": null,
+            "model_training_settings": "MPtrj: VASP PBE/PBE+U, spin-polarised",
+            "evidence": "primary population excludes transition-metal/Hubbard-U systems (Research Design 5.3), removing the PBE vs PBE+U mismatch; the remaining spin-polarisation difference for TM-free systems is a registered limitation"
+          }
         }
       ],
       "B1": [
         {
+          "resolution_status": "resolved",
+          "license_verified": true,
+          "fine_tuned": false,
+          "adapter_version": "e3sse-ase-adapter-v1",
+          "energy_semantics": "total configuration energy in eV (smoke-tested extensive); uncorrected model-native, no MP2020 correction",
+          "force_semantics": "F = -dE/dx in eV/angstrom (smoke-tested by central differences)",
+          "stress_semantics": "ASE convention in eV/angstrom^3 (smoke-tested by finite strain); not used by Studies 1/2a/4",
           "paper_candidate": "one released MatPES-trained model",
-          "frozen_group": "B1",
-          "resolution_status": "unresolved",
-          "required_before_freeze": [
-            "full model provenance",
-            "reference_compatibility"
+          "canonical_name": "M3GNet-MatPES-PBE-v2025.1-PES",
+          "group": "B1",
+          "architecture_family": "M3GNet (same matgl pre-v3 code and structural hyperparameters as Group-A M3GNet; units 128 vs 64)",
+          "pretraining_dataset": "MatPES-PBE 2025.1 (MD-sampled, PBE without U)",
+          "upstream": "https://github.com/materialyzeai/matgl",
+          "release_revision": "matgl v1.2.7",
+          "checkpoint_id": "pretrained_models/M3GNet-MatPES-PBE-v2025.1-PES",
+          "checkpoint_url": "https://raw.githubusercontent.com/materialyzeai/matgl/v1.2.7/pretrained_models/M3GNet-MatPES-PBE-v2025.1-PES/",
+          "weights_sha256": "9f710eac88ec2c666c8e488883c59768cf11c116f177e9d82896ae56f3fc338d",
+          "artifact_files": {
+            "model.json": "6ab754c8593efef1005a37882a27b25417153bfd0b5624d0943901f18116b552",
+            "model.pt": "94b511e45d576cb38a54e2d952fac1eb66e179fb3cddf48ccd86bf4f689f86df",
+            "state.pt": "9f710eac88ec2c666c8e488883c59768cf11c116f177e9d82896ae56f3fc338d"
+          },
+          "package_name": "matgl",
+          "package_version": "1.2.7",
+          "adapter_name": "matgl",
+          "load_options": {
+            "calculator": "matgl.ext.ase.PESCalculator",
+            "stress_unit": "eV/A3",
+            "backend": "DGL 2.1.0",
+            "torchdata": "0.7.1"
+          },
+          "license_identifier": "BSD-3-Clause",
+          "element_coverage": "89 elements (model element_types)",
+          "selection_rationale": "architecture- and implementation-matched to Group-A M3GNet, isolating the MPF -> MatPES pretraining contrast; MACE-MATPES-PBE-0 rejected (OMat fine-tune, ASL licence)",
+          "limitations": [
+            "capacity confound: units 128 vs 64",
+            "MatPES is PBE without U, closer to the LiTraj reference than MPtrj; reference proximity is confounded with coverage"
           ],
-          "selected_implementation": null,
-          "concrete_checkpoint": null
+          "frozen_group": "B1",
+          "reference_compatibility": {
+            "target_functional": "PBE",
+            "target_hubbard_u_policy": "no_hubbard_u",
+            "target_spin_policy": "non_spin_polarized",
+            "target_evidence": "LiTraj scripts/ase_run_vasp.py@c3ca5c2: xc='PBE', ispin=1, no LDAU, encut 520, Gamma-only; Research Design Table 6",
+            "status": "compatible",
+            "primary_analysis_eligible": true,
+            "exclusion_reason": null,
+            "model_training_settings": "MatPES-PBE: VASP PBE without Hubbard U",
+            "evidence": "MatPES PBE without U matches the LiTraj PBE reference; primary population additionally excludes TM/Hubbard-U systems"
+          }
         }
       ],
       "B2": [
         {
-          "paper_candidate": "one released OMat24-trained model",
-          "frozen_group": "B2",
-          "resolution_status": "unresolved",
-          "required_before_freeze": [
-            "full model provenance",
-            "reference_compatibility"
+          "resolution_status": "resolved",
+          "license_verified": true,
+          "fine_tuned": false,
+          "adapter_version": "e3sse-ase-adapter-v1",
+          "energy_semantics": "total configuration energy in eV (smoke-tested extensive); uncorrected model-native, no MP2020 correction",
+          "force_semantics": "F = -dE/dx in eV/angstrom (smoke-tested by central differences)",
+          "stress_semantics": "ASE convention in eV/angstrom^3 (smoke-tested by finite strain); not used by Studies 1/2a/4",
+          "paper_candidate": "one released OMat24-trained model, preferably architecture-matched to Group A",
+          "canonical_name": "SevenNet-omat",
+          "group": "B2",
+          "architecture_family": "SevenNet/NequIP-type (lmax 3, 5 layers, cutoff 6 A, ~15.8M parameters)",
+          "pretraining_dataset": "OMat24 only",
+          "upstream": "https://github.com/MDIL-SNU/SevenNet",
+          "release_revision": "release asset v0.11.0.cp (keyword 7net-omat)",
+          "checkpoint_id": "checkpoint_sevennet_omat.pth",
+          "checkpoint_url": "https://github.com/MDIL-SNU/SevenNet/releases/download/v0.11.0.cp/checkpoint_sevennet_omat.pth",
+          "weights_sha256": "52d7111451a39e6d66b1f4c85cb7cb240dbda48e7bb7341b834ffa0cd8bdc29a",
+          "package_name": "sevenn",
+          "package_version": "0.10.1",
+          "adapter_name": "sevennet",
+          "load_options": {
+            "calculator": "sevenn.sevennet_calculator.SevenNetCalculator"
+          },
+          "license_identifier": "MIT (SevenNet repository; release asset)",
+          "element_coverage": "89 chemical species",
+          "selection_rationale": "only OMat24-only checkpoint that is open-source licensed and in a Group-A architecture family (SevenNet-0); MACE-OMAT-0 rejected (ASL: non-commercial, not open source; AGENTS.md external-resources policy); FAIR-Chem eqV2/eSEN OMat rejected (custom gated OMat24 License requiring acceptance, needs explicit user approval under AGENTS.md)",
+          "limitations": [
+            "capacity confound vs SevenNet-0: lmax 3/6 A/15.8M vs lmax 2/5 A/0.86M",
+            "MatPES -> OMat24 step crosses architectures (M3GNet vs SevenNet)",
+            "OMat24 uses VASP 54 PBE/PBE+U with settings differing from LiTraj",
+            "H3 Spearman trend has three tied levels with one model each in B1/B2: descriptive and low-power"
           ],
-          "selected_implementation": null,
-          "concrete_checkpoint": null,
-          "selection_preference": "architecture also present in Group A when available (Research Design 5.5)"
+          "frozen_group": "B2",
+          "reference_compatibility": {
+            "target_functional": "PBE",
+            "target_hubbard_u_policy": "no_hubbard_u",
+            "target_spin_policy": "non_spin_polarized",
+            "target_evidence": "LiTraj scripts/ase_run_vasp.py@c3ca5c2: xc='PBE', ispin=1, no LDAU, encut 520, Gamma-only; Research Design Table 6",
+            "status": "compatible",
+            "primary_analysis_eligible": true,
+            "exclusion_reason": null,
+            "model_training_settings": "OMat24: VASP PBE/PBE+U (Materials Project-compatible U), spin-polarised",
+            "evidence": "primary population excludes transition-metal/Hubbard-U systems (Research Design 5.3), removing the PBE vs PBE+U mismatch; the remaining spin-polarisation difference for TM-free systems is a registered limitation"
+          }
         }
       ],
       "C": [
@@ -262,14 +414,7 @@
           "paper_candidate": "optional fine-tuned Group-A comparator",
           "frozen_group": "C",
           "resolution_status": "optional_unresolved",
-          "required_if_enabled": [
-            "full model provenance",
-            "parent_checkpoint_id",
-            "training_data_provenance",
-            "reference_compatibility"
-          ],
-          "selected_implementation": null,
-          "concrete_checkpoint": null
+          "status_note": "not enabled for the static freeze"
         }
       ]
     },
@@ -341,9 +486,14 @@
       {
         "id": "study5_evaluation_system_scope",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.4, 5.10",
-        "required_resolution": "define 'evaluation partition' for the Study 5 exclusion: the implemented candidate is exclude every chemical system in the published test split and in each of the ten repeated test sides; published validation systems are added if published_validation_split_role makes validation an evaluation partition; the conservative alternative excludes the whole partition universe (repeated calibration sides included)"
+        "required_resolution": "define 'evaluation partition' for the Study 5 exclusion: the implemented candidate is exclude every chemical system in the published test split and in each of the ten repeated test sides; published validation systems are added if published_validation_split_role makes validation an evaluation partition; the conservative alternative excludes the whole partition universe (repeated calibration sides included)",
+        "resolution": {
+          "status": "resolved",
+          "rule": "exclude every chemical system of the partition universe (all MPLiTrj and nebDFT2k systems, every published split and repeat side); BVEL13k chemical systems are recomputed from structure species with the same normalization and an unparseable system is excluded (fail closed); candidate outcomes are not read",
+          "evidence": "Research Design 5.4, 5.10 gate 0. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "test_side_material_scope_frame_population",
@@ -359,107 +509,184 @@
       {
         "id": "transition_metal_hubbard_u_machine_predicate",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.3",
-        "required_resolution": "explicit element set defining 'transition metals or other elements for which MPtrj uses Hubbard U'"
+        "required_resolution": "explicit element set defining 'transition metals or other elements for which MPtrj uses Hubbard U'",
+        "resolution": {
+          "status": "resolved",
+          "rule": "pymatgen-transition-metal-union-mp2020-u-v1: see scientific_resolutions.primary_tm_hubbard_u",
+          "evidence": "Research Design 5.3. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "mixed_anion_family_precedence",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.6",
-        "required_resolution": "assignment of mixed-anion and oxyanion compounds to oxide/sulfide/halide/nitride/other"
+        "required_resolution": "assignment of mixed-anion and oxyanion compounds to oxide/sulfide/halide/nitride/other",
+        "resolution": {
+          "status": "resolved",
+          "rule": "dominant-anion-count-v1: see scientific_resolutions.mixed_anion_family",
+          "evidence": "Research Design 5.6. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "configurational_energy_decile_definition",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.6",
-        "required_resolution": "energy reference, fit population, and binning rule for configurational-energy deciles"
+        "required_resolution": "energy reference, fit population, and binning rule for configurational-energy deciles",
+        "resolution": {
+          "status": "resolved",
+          "rule": "see scientific_resolutions.configurational_energy_deciles",
+          "evidence": "Research Design 5.6. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "label_budget_repetition_and_stability_rule",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 3.6, 4 RQ4",
-        "required_resolution": "number of subsampling repeats and the operational plateau rule; K in {1,3,5,10,30} is paper-specified"
+        "required_resolution": "number of subsampling repeats and the operational plateau rule; K in {1,3,5,10,30} is paper-specified",
+        "resolution": {
+          "status": "resolved",
+          "rule": "see scientific_resolutions.label_budget_stability; each subsample uses exactly K frames via validate_softening_support(purpose='label_budget_subsample', k=K)",
+          "evidence": "Research Design 3.6, 4. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "estimator_minimum_support",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 3.6",
-        "required_resolution": "minimum frames/force components and near-zero-denominator rule for global, family, material and element estimates"
+        "required_resolution": "minimum frames/force components and near-zero-denominator rule for global, family, material and element estimates",
+        "resolution": {
+          "status": "resolved",
+          "rule": "a full Eq. 17 estimate is defined only with >= 10 frames and >= 100 Cartesian components with |F_DFT| >= 0.1 eV/A (LiTraj DFT force tolerance); pooled scopes additionally >= 3 materials; no fallback between scopes; paired comparisons use one common frozen set of hops where every compared variant is defined, excluded hops counted; global/family results also reported on the full population; enforced by e3sse.protocol.contracts.validate_softening_support(purpose='full_estimate')",
+          "evidence": "Research Design 3.6 (near-zero-force frames carry little information), Table 6 (fmax 0.1 eV/A). frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator",
+          "parameters": {
+            "full_estimate_min_frames": 10,
+            "full_estimate_min_informative_components": 100,
+            "informative_force_eV_per_A": 0.1,
+            "pooled_min_materials": 3,
+            "label_budget_k": [
+              1,
+              3,
+              5,
+              10,
+              30
+            ],
+            "label_budget_min_population": 60
+          }
+        }
       },
       {
         "id": "s_bar_definition",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 4 Table 4, 6 Table 9",
-        "required_resolution": "whether s-bar (G1, RQ1 'median s <= 0.9') is the pooled Eq. 17 estimate or the median of material-level s"
+        "required_resolution": "whether s-bar (G1, RQ1 'median s <= 0.9') is the pooled Eq. 17 estimate or the median of material-level s",
+        "resolution": {
+          "status": "resolved",
+          "rule": "s-bar(model) = median over Study-1 target hops (published train, primary population, minimum support met) of the hop-specific leakage-free material-level Eq. 17 estimate; the same s-bar is used for P1 eligibility, G1, the dose-response slope and H3 (augmentation: the RD writes both 'median s' and 's-bar')",
+          "evidence": "Research Design 4 Table 4 (RQ1, RQ3), 6 Table 9 (G1). frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "s_host_definition",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 3.5, 5.6",
-        "required_resolution": "definition of s_host (e.g. Eq. 17 over all non-Li force components) for the s_Li vs s_host diagnostic"
+        "required_resolution": "definition of s_host (e.g. Eq. 17 over all non-Li force components) for the s_Li vs s_host diagnostic",
+        "resolution": {
+          "status": "resolved",
+          "rule": "s_host = Eq. 17 restricted to the Cartesian force components of all non-Li atoms, pooled, over the same frames as s_Li (augmentation)",
+          "evidence": "Research Design 3.5, 5.6. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "holm_family_interpretation",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.11",
-        "required_resolution": "whether P1 contributes one test or one per Group-A model to the Holm family with P2"
+        "required_resolution": "whether P1 contributes one test or one per Group-A model to the Holm family with P2",
+        "resolution": {
+          "status": "resolved",
+          "rule": "see scientific_resolutions.holm_family",
+          "evidence": "Research Design 5.11. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "published_validation_split_role",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.2, 5.4",
-        "required_resolution": "role of the published LiTraj validation split (training/development, evaluation, or unused); train and test roles follow the paper"
+        "required_resolution": "role of the published LiTraj validation split (training/development, evaluation, or unused); train and test roles follow the paper",
+        "resolution": {
+          "status": "resolved",
+          "rule": "published validation data are a sealed auxiliary reserve (augmentation): not in Study 1 fits, not in Study 2a inference, not for thresholds, tuning or pilot; their chemical systems remain partition units in the ten repeats (Study 4 units by chemical system) and are excluded from Study 5",
+          "evidence": "Research Design 5.2, 5.4 (no confirmatory role assigned). frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "published_split_chemical_system_overlap_rule",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.4",
-        "required_resolution": "handling of chemical systems spanning published splits when fitting pooled training-side s"
+        "required_resolution": "handling of chemical systems spanning published splits when fitting pooled training-side s",
+        "resolution": {
+          "status": "resolved",
+          "rule": "the published split is kept literally; pooled training-side s for Study 2a uses published-train frames only; the count of chemical systems spanning splits is reported by the frozen protocol; pre-specified sensitivity: Study 2a excluding spanning systems",
+          "evidence": "Research Design 5.4 (published split primary; systems share a partition in the repeats). frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "study4_predictor_calibration_independence",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 3.8, 5.4",
-        "required_resolution": "how pooled s inside the Study 4 predictor is fixed without calibration or test outcomes while preserving calibration/test exchangeability"
+        "required_resolution": "how pooled s inside the Study 4 predictor is fixed without calibration or test outcomes while preserving calibration/test exchangeability",
+        "resolution": {
+          "status": "resolved",
+          "rule": "per repeat, pooled s for SRT-global/SRT-family is fitted only on MPLiTrj frames of training-side chemical systems without nebDFT2k hops (disjoint from every calibration and test unit); if that stratum lacks minimum support for a scope, the pre-registered fallback fits s symmetrically on forces only of all calibration and test units of that repeat, applied identically to both, never using Y; Study 4 SRT-global is therefore distinct from Study 2a SRT-global; the raw predictor needs no fit; c and alpha are paper-fixed",
+          "evidence": "Research Design 3.8 (predictor fixed without calibration or test outcomes; X includes auxiliary force data). frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "g4_monte_carlo_standard_error_definition",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.9, 6 Table 9",
-        "required_resolution": "computation of the Monte Carlo standard error for realised FDR given 200 dependent draws within each of ten partitions"
+        "required_resolution": "computation of the Monte Carlo standard error for realised FDR given 200 dependent draws within each of ten partitions",
+        "resolution": {
+          "status": "resolved",
+          "rule": "replicate = one draw d of one hop per chemical system within partition p (200 per partition, 10 partitions); FDR_p = mean_d FDP_{p,d}; realised FDR = mean_p FDR_p; MC s.e. = SD_p(FDR_p)/sqrt(10) with ddof=1 (partitions are the independent replicates); G4 passes iff realised FDR <= alpha + 2*MC s.e. in every (predictor, alpha, c) cell; per-partition FDR_p reported; the test has low power (9 d.o.f.)",
+          "evidence": "Research Design 5.9, 6 Table 9. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "repeated_test_pilot_overlap_rule",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 4, 5.4",
-        "required_resolution": "how pilot thresholds tuned on published-train hops are kept independent of repeated-partition test sides that contain those hops"
+        "required_resolution": "how pilot thresholds tuned on published-train hops are kept independent of repeated-partition test sides that contain those hops",
+        "resolution": {
+          "status": "resolved",
+          "rule": "the pilot may read only published-train MPLiTrj DFT forces/energies of frames outside every NEB path (enforced by the outcome_kind allowlist) and simulated outcomes; nebDFT2k barriers are never tuning inputs; every Study 4/5 rule is frozen before the pilot and pilot amendments may fix only Study 1/2 settings; the MDE analysis is simulation-based on training-force-derived s distributions (augmentation of the RD 'training-split pilot')",
+          "evidence": "Research Design 4, 5.11. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "model_checkpoint_and_reference_compatibility_resolution",
         "resolution_category": "requires_preanalysis_scientific_decision",
-        "blocking": true,
+        "blocking": false,
         "paper_reference": "Research Design 5.5",
-        "required_resolution": "concrete checkpoints, hashes, licences, package versions and reference compatibility for Group A and the B1/B2 selections"
-      },
-      {
-        "id": "preregistration_record",
-        "resolution_category": "resolve_from_production_artifact",
-        "blocking": true,
-        "paper_reference": "Research Design 4, 8",
-        "required_resolution": "public preregistration identifier (external record) recorded before the freeze"
+        "required_resolution": "concrete checkpoints, hashes, licences, package versions and reference compatibility for Group A and the B1/B2 selections",
+        "resolution": {
+          "status": "resolved",
+          "rule": "frozen model registry in protocol.model_groups (Group A = LiTraj benchmark identities; B1 = M3GNet-MatPES-PBE-v2025.1-PES; B2 = SevenNet-omat; C not enabled); each checkpoint SHA-256 is verified before loading; all six passed the e3sse-unit-smoke-v3 test through adapter e3sse-ase-adapter-v1",
+          "evidence": "Research Design 5.5 Table 7; LiTraj Methods; AGENTS.md external resources. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
+        }
       },
       {
         "id": "fpmd_transport_reference_recoverability",
@@ -477,38 +704,86 @@
       }
     ],
     "known_deviations": [
-      "G0 is evaluated per branch: the static branch may be ready while G0 is globally partial; Study 3 stays gated until the FPMD transport branch is ready"
+      "G0 is evaluated per branch: the static branch may be ready while G0 is globally partial; Study 3 stays gated until the FPMD transport branch is ready",
+      "Group-A M3GNet uses the pre-v3 matgl implementation it was trained with (matgl 1.2.7, DGL), matching the LiTraj benchmark",
+      "MACE-MP-0 small is frozen to the file LiTraj's code loads (2023-12-10, 3,847,696 parameters), not the paper's '2023.12.03 / 2.08M' label"
     ],
     "scientific_resolutions": {
       "primary_tm_hubbard_u": {
-        "status": "unresolved",
-        "predicate_id": null,
-        "excluded_elements": null,
-        "evidence": null
+        "status": "resolved",
+        "predicate_id": "pymatgen-transition-metal-union-mp2020-u-v1",
+        "excluded_elements": [
+          "Ac",
+          "Ag",
+          "Au",
+          "Bh",
+          "Cd",
+          "Cn",
+          "Co",
+          "Cr",
+          "Cu",
+          "Db",
+          "Ds",
+          "Fe",
+          "Hf",
+          "Hg",
+          "Hs",
+          "Ir",
+          "La",
+          "Mn",
+          "Mo",
+          "Mt",
+          "Nb",
+          "Ni",
+          "Os",
+          "Pd",
+          "Pt",
+          "Re",
+          "Rf",
+          "Rg",
+          "Rh",
+          "Ru",
+          "Sc",
+          "Sg",
+          "Ta",
+          "Tc",
+          "Ti",
+          "V",
+          "W",
+          "Y",
+          "Zn",
+          "Zr"
+        ],
+        "evidence": "Research Design 5.3, 3.9; LiTraj Results (non-spin PBE without U vs MP spin-polarised PBE+U for d-electron TMs); pymatgen 2024.2.8 Element.is_transition_metal; MP2020 Hubbard-U elements Co,Cr,Fe,Mn,Mo,Ni,V,W. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator",
+        "sensitivity": "pre-specified secondary: additionally exclude f-block elements Ce-Lu",
+        "scope": "same predicate applies to the Study 3 panel and Study 5 gate 0"
       },
       "mixed_anion_family": {
-        "status": "unresolved",
-        "precedence": null,
-        "evidence": null
+        "status": "resolved",
+        "rule_id": "dominant-anion-count-v1",
+        "rule": "family element sets oxide{O}, sulfide{S}, halide{F,Cl,Br,I}, nitride{N}; atom counts (not oxidation states) per family from the material composition; strictly largest family wins; no family element -> other; tie between the two largest -> other",
+        "evidence": "Research Design 5.6 families; composition-only, outcome-independent. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
       },
       "configurational_energy_deciles": {
-        "status": "unresolved",
-        "energy_reference": null,
-        "fit_population": null,
-        "binning_rule": null,
-        "evidence": null
+        "status": "resolved",
+        "energy_reference": "per frame f of material m: dE_f = [E_DFT(f) - min E_DFT over R(m, N_f)] / N_f in eV/atom, R(m, N) = all published-train primary-population MPLiTrj frames of material m with N atoms (hop-independent)",
+        "fit_population": "decile cut points from all published-train primary-population frames, pooled (global); separate cut points for the TM/Hubbard-U secondary population",
+        "binning_rule": "numpy.quantile at 0.1..0.9 (method 'linear'); right-closed bins, a value equal to a cut point goes to the lower decile; coincident cut points leave a decile empty and it is reported as empty, never re-filled",
+        "evidence": "Research Design 5.6 ('configurational-energy decile'); DFT energies only, no ML prediction or barrier outcome. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
       },
       "label_budget_stability": {
-        "status": "unresolved",
-        "repeat_count": null,
-        "stability_metric": null,
-        "selection_rule": null,
-        "evidence": null
+        "status": "resolved",
+        "repeat_count": 1000,
+        "stability_metric": "SD over repeats of s_K per target hop, reported raw and finite-population-corrected (divided by sqrt((N-K)/(N-1))); the corrected SD is aggregated as the median over materials of the material-mean SD and used for the 0.03 plateau test; |median s_K - s_all| also reported; H4 is an empirical Monte Carlo result, not a formal guarantee",
+        "selection_rule": "fixed common hop set (material-scope eligible frames N >= 60) for every K in {1,3,5,10,30}; K frames uniformly without replacement; seed analysis_seed(base_seed, 'study1_label_budget', scope, target, hop_id, K, repeat) without model_id (common random numbers across models); plateau K* = smallest K with median SD <= 0.03 (augmentation of RD 4 H4 '+/-0.03'); H4 supported iff K* <= 10; label-budget subsamples are exempt from the full-estimate minimum-support rule",
+        "evidence": "Research Design 3.6 (K values, repeated subsampling), 4 RQ4/H4; R=1000 gives ~2.2% relative MC error in SD(s_K). frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator",
+        "population_rule": "per hop, fixed once before any draw and identical for every K, s_all and model: leakage-eligible material-scope frames with at least one |F_DFT| >= 0.1 eV/A component; >= 60 such frames; subsamples are never filtered or redrawn on their own forces; a zero Eq. 17 denominator is an error, recorded and reported",
+        "hop_set_rule": "the qualifying hop set is frozen as a manifest (hop_id list + SHA-256) before analysis and is identical for every model and K"
       },
       "holm_family": {
-        "status": "unresolved",
-        "family": null,
-        "evidence": null
+        "status": "resolved",
+        "family": "Holm over {P1_m for each Group-A model m with s-bar <= 0.9} plus P2; P1_m p-value = one-sided chemical-system cluster-bootstrap p for rho_SRT <= 0; RQ1 'CI > 0' is read as the Holm-adjusted test; P3 is a validity check outside the family; Holm-adjusted P1 is final only once P2 (Study 3) exists",
+        "evidence": "Research Design 5.11 (Holm across P1-P2; P3 validity), 4 Table 4 RQ1; the per-model family is an augmentation. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
       }
     }
   }

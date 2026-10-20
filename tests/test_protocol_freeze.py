@@ -14,6 +14,11 @@ from protocol_fixtures import (
 )
 
 from e3sse.data.mplitrj_provenance import material_bucket
+from e3sse.protocol.chemistry import (
+    ANION_FAMILY_RULE_ID,
+    TM_RULE_ID,
+    primary_exclusion_elements,
+)
 from e3sse.protocol.contracts import (
     OutcomeAccessDenied,
     require_outcome_access,
@@ -107,10 +112,14 @@ def test_published_split_and_study5_exclusions_preserve_source_labels():
         row["chemical_system_id"] for row in rows if row["published_split"] == "test"
     )
     repeated = build_repeated_partitions(rows, base_seed=7)
-    exclusions = derive_study5_exclusions(published["test_chemical_systems"], repeated)
-    assert set(exclusions["chemical_system_ids"]) == set(published["test_chemical_systems"]).union(
+    exclusions = derive_study5_exclusions(
+        published["test_chemical_systems"], repeated, [r["chemical_system_id"] for r in rows]
+    )
+    union = set(published["test_chemical_systems"]).union(
         *(set(partition["test_chemical_systems"]) for partition in repeated["partitions"])
     )
+    assert union <= set(exclusions["chemical_system_ids"])
+    assert set(exclusions["chemical_system_ids"]) == {row["chemical_system_id"] for row in rows}
 
 
 def test_partition_rounding_and_unit_identity_fail_closed():
@@ -385,7 +394,8 @@ def _phase_b_fixture(tmp_path: Path) -> tuple[Path, Path]:
             "published_split": row["published_split"],
             "material_id": row["material_id"],
             "edge_id": row["hop_id"],
-            "raw_file_kind": "band_optim_step",
+            # One published-train endpoint-relaxation frame exercises the pilot allowlist.
+            "raw_file_kind": "source" if row["frame_id"] == "MPLiTrj_train.xyz:0" else "band_optim_step",
             "mapping_status": "mapped_unique",
         }
         for row in records
@@ -635,13 +645,13 @@ def _phase_b_fixture(tmp_path: Path) -> tuple[Path, Path]:
             "scientific_resolutions": {
                 "primary_tm_hubbard_u": {
                     "status": "resolved",
-                    "predicate_id": "toy",
-                    "excluded_elements": ["N"],
+                    "predicate_id": TM_RULE_ID,
+                    "excluded_elements": primary_exclusion_elements(),
                     "evidence": "synthetic",
                 },
                 "mixed_anion_family": {
                     "status": "resolved",
-                    "precedence": ["toy"],
+                    "rule_id": ANION_FAMILY_RULE_ID,
                     "evidence": "synthetic",
                 },
                 "configurational_energy_deciles": {

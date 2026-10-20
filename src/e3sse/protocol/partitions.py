@@ -320,34 +320,52 @@ def published_split_summary(records: Iterable[Mapping[str, Any]]) -> dict[str, A
     }
 
 
-def derive_study5_exclusions(
-    published_test_chemical_systems: Iterable[str], repeated: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Return the union of published-test and every repeated-test chemical system.
+STUDY5_EXCLUSION_RULE = "entire-partition-universe-v1"
 
-    Research Design section 5.4: the Study 5 pool excludes every chemical system
-    present in any evaluation partition.  Both inputs are required explicitly so a
-    missing published-test membership cannot silently shrink the exclusion set.
-    The artifact contains identifiers only; no candidate pool is read here.
+
+def derive_study5_exclusions(
+    published_test_chemical_systems: Iterable[str],
+    repeated: Mapping[str, Any],
+    universe_chemical_systems: Iterable[str],
+) -> dict[str, Any]:
+    """Exclude every chemical system of the LiTraj partition universe from Study 5.
+
+    Research Design 5.4/5.10 exclude every chemical system present in any evaluation
+    partition.  The registered conservative reading excludes the whole partition
+    universe (every published split and every repeat side), a superset of
+    union(published test, ten repeated tests).  Inputs are identifiers only; no
+    candidate pool is read.
     """
 
-    if isinstance(published_test_chemical_systems, (str, bytes)):
-        raise TypeError("published test chemical systems must be an iterable of identifiers")
+    if isinstance(published_test_chemical_systems, (str, bytes)) or isinstance(
+        universe_chemical_systems, (str, bytes)
+    ):
+        raise TypeError("chemical systems must be iterables of identifiers")
     published = {normalize_chemical_system(item) for item in published_test_chemical_systems}
-    if not published:
-        raise ValueError("published test chemical systems must be non-empty")
+    universe = {normalize_chemical_system(item) for item in universe_chemical_systems}
+    if not published or not universe:
+        raise ValueError("published test and universe chemical systems must be non-empty")
     partitions = repeated.get("partitions")
     if not isinstance(partitions, list) or len(partitions) != repeated.get("repeats"):
         raise ValueError("repeated partition manifest is incomplete")
-    excluded = set(published)
+    evaluation = set(published)
     for repeat in partitions:
-        excluded.update(repeat["test_chemical_systems"])
+        evaluation.update(repeat["test_chemical_systems"])
+    if not evaluation <= universe:
+        raise ValueError("evaluation chemical systems lie outside the partition universe")
     return {
-        "schema_version": "e3sse.study5.exclusions.v1",
-        "derivation": "union(published_test, repeated_test[0:10])",
+        "schema_version": "e3sse.study5.exclusions.v2",
+        "rule": STUDY5_EXCLUSION_RULE,
+        "derivation": "partition_universe (superset of published_test and repeated_test[0:10])",
         "chemical_system_definition": CHEMICAL_SYSTEM_ALGORITHM,
         "published_test_count": len(published),
-        "chemical_system_ids": sorted(excluded),
-        "count": len(excluded),
+        "evaluation_union_count": len(evaluation),
+        "evaluation_union_contained": True,
+        "chemical_system_ids": sorted(universe),
+        "count": len(universe),
         "candidate_pool_inspected": False,
+        "matching_requirement": (
+            "candidate chemical systems are normalized with the same algorithm before "
+            "exclusion; an unparseable candidate system is excluded (fail closed)"
+        ),
     }
