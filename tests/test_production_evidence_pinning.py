@@ -129,9 +129,19 @@ def test_unit_evidence_must_come_from_the_pinned_files(tmp_path, monkeypatch):
     _clean_repository(monkeypatch)
     config_path = _production_fixture(tmp_path, complete=True)
     _rewrite_unit_evidence(
-        config_path, lambda r: r["mplitrj"]["train"].update({"sha256": "0" * 64})
+        config_path, lambda r: r["evidence"]["mplitrj"]["train"].update({"sha256": "0" * 64})
     )
     with pytest.raises(ProtocolFreezeError, match="pinned MPLiTrj files"):
+        materialize_protocol(config_path)
+
+
+def test_unit_evidence_must_come_from_the_pinned_nebdft2k_index(tmp_path, monkeypatch):
+    _clean_repository(monkeypatch)
+    config_path = _production_fixture(tmp_path, complete=True)
+    _rewrite_unit_evidence(
+        config_path, lambda r: r["evidence"]["nebdft2k"].update({"index_sha256": "0" * 64})
+    )
+    with pytest.raises(ProtocolFreezeError, match="pinned nebDFT2k index"):
         materialize_protocol(config_path)
 
 
@@ -139,9 +149,82 @@ def test_a_convergence_flag_column_contradicts_the_registered_resolution(tmp_pat
     _clean_repository(monkeypatch)
     config_path = _production_fixture(tmp_path, complete=True)
     _rewrite_unit_evidence(
-        config_path, lambda r: r["nebdft2k"]["index_columns"].append("neb_converged")
+        config_path,
+        lambda r: r["evidence"]["nebdft2k"]["index_columns"].append("neb_converged"),
     )
     with pytest.raises(ProtocolFreezeError, match="contradict the flag resolution"):
+        materialize_protocol(config_path)
+
+
+def test_producer_wrapped_unit_evidence_binds_without_host_paths(tmp_path, monkeypatch):
+    _clean_repository(monkeypatch)
+    config_path = _production_fixture(tmp_path, complete=True)
+    config = json.loads(config_path.read_text())
+    record = config["inputs"]["production_evidence"]["unit_evidence"]
+    artifact = json.loads(Path(record["path"]).read_text())
+    # Same top-level shape as scripts/collect_unit_evidence.py writes in production.
+    assert set(artifact) == {"evidence", "fingerprint", "python"}
+    assert artifact["fingerprint"]["files"][0].startswith("/srv/host/")
+    protocol, _path = materialize_protocol(config_path)
+    serialized = json.dumps(protocol)
+    assert "/srv/host/" not in serialized
+    assert artifact["fingerprint"]["git_sha"] not in serialized
+    assert record["path"] not in serialized
+    assert protocol["production_evidence"]["unit_evidence"] == {"sha256": record["sha256"]}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda r: r.pop("evidence"), "not a unit-evidence report"),
+        (lambda r: r.update({"evidence": ["schema_version"]}), "no valid evidence payload"),
+        (
+            lambda r: r["evidence"].update({"schema_version": "e3sse.unit-evidence.v1"}),
+            "no valid evidence payload",
+        ),
+        (lambda r: r.pop("fingerprint"), "not a unit-evidence report"),
+        (lambda r: r["fingerprint"].pop("schema"), "no valid fingerprint"),
+        (
+            lambda r: r["fingerprint"].update({"schema": "e3sse.unit-evidence.v1"}),
+            "no valid fingerprint",
+        ),
+        (lambda r: r.update({"extra": 1}), "not a unit-evidence report"),
+        (lambda r: r["fingerprint"].update({"git_sha": "HEAD"}), r"\['git_sha'\]"),
+        (lambda r: r["fingerprint"].update({"files": "/srv"}), r"\['files'\]"),
+        (
+            lambda r: r["fingerprint"].update({"train_nonpath_frame_indices": [3, 1]}),
+            r"\['train_nonpath_frame_indices'\]",
+        ),
+        (
+            lambda r: r["fingerprint"].update({"inventory_sha256": "0" * 64}),
+            "pinned G0 input inventory",
+        ),
+        # A bare inner payload: the producer has never written this form.
+        (lambda r: (r.update(r.pop("evidence")), r.pop("fingerprint"), r.pop("python")),
+         "not a unit-evidence report"),
+    ],
+    ids=[
+        "missing-evidence", "evidence-not-mapping", "wrong-inner-schema", "missing-fingerprint",
+        "missing-fingerprint-schema", "wrong-fingerprint-schema", "unknown-top-level-key",
+        "malformed-git-sha", "malformed-files", "unsorted-frame-indices",
+        "wrong-inventory", "flat-payload",
+    ],
+)
+def test_malformed_unit_evidence_wrapper_fails_closed(tmp_path, monkeypatch, mutate, message):
+    _clean_repository(monkeypatch)
+    config_path = _production_fixture(tmp_path, complete=True)
+    _rewrite_unit_evidence(config_path, mutate)
+    with pytest.raises(ProtocolFreezeError, match=message):
+        materialize_protocol(config_path)
+
+
+def test_tampered_unit_evidence_fails_on_hash_before_content(tmp_path, monkeypatch):
+    _clean_repository(monkeypatch)
+    config_path = _production_fixture(tmp_path, complete=True)
+    config = json.loads(config_path.read_text())
+    path = Path(config["inputs"]["production_evidence"]["unit_evidence"]["path"])
+    path.write_text("not json")
+    with pytest.raises(ProtocolFreezeError, match="unit evidence report SHA-256 mismatch"):
         materialize_protocol(config_path)
 
 

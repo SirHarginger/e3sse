@@ -120,6 +120,24 @@ def complete_inference_record(record: dict) -> dict:
     return record
 
 
+def unit_evidence_artifact(
+    evidence: dict, *, inventory_sha256: str, files: list[str] | None = None
+) -> dict:
+    """The exact wrapper ``scripts/collect_unit_evidence.py`` writes to evidence.json."""
+
+    return {
+        "evidence": {"schema_version": "e3sse.unit-evidence.v2", **evidence},
+        "fingerprint": {
+            "schema": "e3sse.unit-evidence.v2",
+            "git_sha": "f" * 40,
+            "inventory_sha256": inventory_sha256,
+            "files": sorted(files or ["/srv/host/data/MPLiTrj_train.xyz"]),
+            "train_nonpath_frame_indices": [0, 3, 7],
+        },
+        "python": "3.11.16 (main) [GCC]",
+    }
+
+
 def production_evidence(models: list[dict], root=None, unit_evidence=None) -> dict:
     """Pinned production evidence binding one passed smoke report to each model.
 
@@ -174,7 +192,7 @@ def production_evidence(models: list[dict], root=None, unit_evidence=None) -> di
     return {
         "unit_evidence": pin(
             "unit_evidence.json",
-            {"schema_version": "e3sse.unit-evidence.v2", **(unit_evidence or {})},
+            unit_evidence or unit_evidence_artifact({}, inventory_sha256="5" * 64),
         ),
         "runtime_environments": environments,
         "model_smoke_reports": reports,

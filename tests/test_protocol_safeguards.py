@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-from protocol_fixtures import production_evidence
+from protocol_fixtures import production_evidence, unit_evidence_artifact
 from test_protocol_configuration import _model, _production_config
 from test_protocol_freeze import _phase_b_fixture, _sha, _write
 
@@ -255,18 +255,23 @@ def _clean_repository(monkeypatch):
 
 
 def _unit_evidence_for(config: dict) -> dict:
-    """Synthetic unit evidence collected from exactly the fixture's pinned files."""
+    """Producer-format unit evidence collected from exactly the fixture's pinned files."""
 
     root = Path(config["inputs"]["mplitrj_provenance"]["root"])
     sources = json.loads((root / "manifest.json").read_text())["flattened_sources"]
-    g0_inputs = json.loads(Path(config["inputs"]["g0_input_manifest"]["path"]).read_text())
-    return {
-        "mplitrj": {s["published_split"]: {"sha256": s["sha256"]} for s in sources},
-        "nebdft2k": {
-            "index_sha256": g0_inputs["inputs"]["nebDFT2k"][0]["sha256"],
-            "index_columns": ["edge_id", "material_id", "chemsys", "_split"],
+    inventory_path = Path(config["inputs"]["g0_input_manifest"]["path"])
+    g0_inputs = json.loads(inventory_path.read_text())
+    return unit_evidence_artifact(
+        {
+            "mplitrj": {s["published_split"]: {"sha256": s["sha256"]} for s in sources},
+            "nebdft2k": {
+                "index_sha256": g0_inputs["inputs"]["nebDFT2k"][0]["sha256"],
+                "index_columns": ["edge_id", "material_id", "chemsys", "_split"],
+            },
         },
-    }
+        inventory_sha256=_sha(inventory_path),
+        files=[f"/srv/host/data/{s['published_split']}.xyz" for s in sources],
+    )
 
 
 def _production_fixture(tmp_path: Path, *, complete: bool) -> Path:

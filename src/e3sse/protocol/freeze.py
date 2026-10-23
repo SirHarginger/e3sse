@@ -142,16 +142,67 @@ def _resolve(base: Path, value: str) -> Path:
 _CONVERGENCE_FLAG_COLUMN = re.compile(r"conver|fail|monoton|flag|status", re.IGNORECASE)
 
 
+_UNIT_EVIDENCE_ARTIFACT_KEYS = frozenset({"evidence", "fingerprint", "python"})
+_GIT_COMMIT = re.compile(r"[0-9a-f]{40}")
+_HEX_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _unwrap_unit_evidence(artifact: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate the artifact written by ``scripts/collect_unit_evidence.py``.
+
+    The producer writes ``{"evidence", "fingerprint", "python"}``; the scientific
+    report is the inner ``evidence``.  Only the wrapper form is accepted.
+    ``fingerprint.git_sha`` is the historical collection commit (provenance), not
+    this protocol's commit, so only its form is checked.  ``fingerprint.files`` are
+    host paths and never enter protocol identity; files bind by content hash.
+    """
+
+    if not isinstance(artifact, Mapping) or set(artifact) != _UNIT_EVIDENCE_ARTIFACT_KEYS:
+        raise ProtocolFreezeError("pinned unit evidence is not a unit-evidence report")
+    evidence, fingerprint = artifact["evidence"], artifact["fingerprint"]
+    if not isinstance(evidence, Mapping) or evidence.get("schema_version") != UNIT_EVIDENCE_SCHEMA:
+        raise ProtocolFreezeError("unit-evidence report has no valid evidence payload")
+    if not isinstance(fingerprint, Mapping) or fingerprint.get("schema") != UNIT_EVIDENCE_SCHEMA:
+        raise ProtocolFreezeError("unit-evidence report has no valid fingerprint")
+    files = fingerprint.get("files")
+    indices = fingerprint.get("train_nonpath_frame_indices")
+    malformed = [
+        name
+        for name, ok in {
+            "git_sha": isinstance(fingerprint.get("git_sha"), str)
+            and _GIT_COMMIT.fullmatch(fingerprint["git_sha"]) is not None,
+            "inventory_sha256": isinstance(fingerprint.get("inventory_sha256"), str)
+            and _HEX_SHA256.fullmatch(fingerprint["inventory_sha256"]) is not None,
+            "files": isinstance(files, list) and all(isinstance(f, str) for f in files),
+            "train_nonpath_frame_indices": isinstance(indices, list)
+            and all(type(i) is int and i >= 0 for i in indices)
+            and indices == sorted(indices),
+            "python": isinstance(artifact["python"], str),
+        }.items()
+        if not ok
+    ]
+    if malformed:
+        raise ProtocolFreezeError(f"unit-evidence fingerprint is malformed: {malformed}")
+    return dict(evidence), dict(fingerprint)
+
+
 def _bind_unit_evidence(
-    unit_report: Mapping[str, Any] | None,
+    unit_artifact: Any,
     g0_inputs: Mapping[str, Any],
+    g0_inputs_sha: str,
     provenance: Mapping[str, Any],
     data_root: Path,
 ) -> None:
     """The unit evidence must describe the exact files this freeze is built from."""
 
-    if unit_report is None:
+    if unit_artifact is None:
         return
+    unit_report, fingerprint = _unwrap_unit_evidence(unit_artifact)
+    # The producer resolves its files through the G0 input inventory it hashes.
+    if fingerprint["inventory_sha256"] != g0_inputs_sha:
+        raise ProtocolFreezeError(
+            "unit evidence was not collected from the pinned G0 input inventory"
+        )
     mplitrj_known = {source.get("sha256") for source in provenance.get("flattened_sources", [])}
     mplitrj_known |= {entry.get("sha256") for entry in g0_inputs["inputs"].get("MPLiTrj", [])}
     neb_known = set()
@@ -176,7 +227,7 @@ def _bind_unit_evidence(
 
 def _verify_production_evidence(
     config: Mapping[str, Any], base: Path
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, Any]:
     """Re-hash the pinned production evidence and bind each smoke report to its model.
 
     Missing or unpinned entries are freeze blockers reported by the configuration
@@ -206,11 +257,7 @@ def _verify_production_evidence(
     unit_report = None
     if unit_evidence is not None:
         unit_report = _load_json(_resolve(base, unit_evidence["path"]))
-        if not isinstance(unit_report, Mapping) or unit_report.get(
-            "schema_version"
-        ) != UNIT_EVIDENCE_SCHEMA:
-            raise ProtocolFreezeError("pinned unit evidence is not a unit-evidence report")
-        unit_report = dict(unit_report)
+        _unwrap_unit_evidence(unit_report)
     environments = evidence.get("runtime_environments") or {}
     verified: dict[str, Any] = {
         "unit_evidence": unit_evidence,
@@ -1184,7 +1231,11 @@ def materialize_protocol(
         provenance_root, provenance_spec, audit
     )
     _bind_unit_evidence(
-        unit_report, g0_inputs, provenance, Path(server_config["paths"]["data_root"])
+        unit_report,
+        g0_inputs,
+        g0_inputs_sha,
+        provenance,
+        Path(server_config["paths"]["data_root"]),
     )
 
     linkage_spec = config["inputs"].get("material_chemical_system_linkage")
