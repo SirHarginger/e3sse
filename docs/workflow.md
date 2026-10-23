@@ -201,64 +201,141 @@ MD, softening estimation, or held-out outcome analysis.
 
 The pre-analysis decisions, model registry and canonical adapters are frozen in
 `configs/protocol_freeze.json` and `src/e3sse/protocol/{chemistry,adapters}.py`.
-Before the final materialization on the server, at the reviewed commit:
+The production evidence below is complete and pinned by SHA-256 in
+`inputs.production_evidence`.  Do not regenerate it.  The materializer re-hashes
+every pinned file and binds each smoke report to its model's checkpoint SHA-256,
+package version and adapter version, a passed result, and a clean tree.
 
-1. Collect read-only source-unit evidence (headers for every split; numeric scale
-   checks on a few published-train frames only):
+1. Source-unit evidence (`scripts/collect_unit_evidence.py`, read-only):
+   `outputs/unit_evidence/c0b395303df2f352/evidence.json`.  It establishes
+   positions and cell in angstrom, DFT energy in eV, forces in eV/angstrom, stress
+   in eV/angstrom^3, and barrier in eV (max - min of DFT image energies, LiTraj
+   `litraj.utils.get_barrier`).  The nebDFT2k index has no convergence flag, so
+   `exclude_and_count_when_flag_provided` excludes no hop by flag.
+2. Model smoke reports (`scripts/smoke_test_models.py`, synthetic Li2O only):
+   `outputs/model_smoke/<canonical_name>.json`, one per frozen model, all passed.
+   Each model ran in its own isolated environment pinned to the registry
+   `package_version`; environments are never shared across package versions.  The
+   lock files in `outputs/model_smoke/environment_locks/` are the complete
+   dependency records.  The table lists only the compatibility pins found during
+   reconstruction.  The materializer checks each pin against the versions recorded
+   in the smoke report, except `torchdata`, which reports do not record; it is held
+   in `lock_recorded_pins` and evidenced by the lock file.
 
-   ```bash
-   PYTHONPATH=src python scripts/collect_unit_evidence.py \
-     --config configs/protocol_freeze.json --output outputs/unit_evidence --resume
-   ```
+   | Environment (`~/.venvs/<name>`) | Python | Pinned packages | Environment | Lock | Frozen models |
+   |---|---|---|---|---|---|
+   | `e3sse-chgnet-0.3.0` | 3.11.16 | `chgnet==0.3.0`, `ase==3.22.1`, `numpy==1.26.4` | | `chgnet-0.3.0.txt` | `CHGNet-0.3.0` |
+   | `e3sse-matgl-1.2.7` | 3.11.16 | `matgl==1.2.7`, `dgl==2.1.0`, `torchdata==0.7.1`, `torch==2.1.1`, `ase==3.24.0`, `numpy==1.26.4` | `DGLBACKEND=pytorch` | `matgl-1.2.7.txt` | `M3GNet-MP-2021.2.8-PES`, `M3GNet-MatPES-PBE-v2025.1-PES` |
+   | `e3sse-mace-0.3.6` | 3.11.16 | `mace-torch==0.3.6`, `torch==2.5.1` | | `mace-0.3.6.txt` | `MACE-MP-0-small-2023-12-10` |
+   | `e3sse-sevennet-0.10.1` | 3.11.16 | `sevenn==0.10.1` | | `sevennet-0.10.1.txt` | `SevenNet-0-11July2024` |
+   | `e3sse-sevennet-0.11.0` | 3.11.16 | `sevenn==0.11.0` | | `sevennet-0.11.0.txt` | `SevenNet-omat` |
 
-   Record the report path and SHA-256, and the observed extxyz keys, in
-   `unit_contract.<quantity>.production_source_unit_evidence` for position, cell,
-   dft_energy, dft_force, stress and barrier (barrier = max - min of DFT image
-   energies, LiTraj `litraj.utils.get_barrier`), and resolve
-   `nebdft2k_convergence_flag_availability` from `index_columns`.
-2. Regenerate the model smoke reports, each in its own isolated environment
-   pinned to the registry `package_version`, with checkpoints matching the
-   registry SHA-256 values.  Environments are never shared across package
-   versions; in particular the two SevenNet releases need separate environments
-   (SevenNet-0 keeps the LiTraj benchmark release, while `7net-omat` first ships
-   in sevenn 0.11.0, which also changes tensor-product ordering and requires
-   `e3nn>=0.5.0`).  Python 3.11 is an engineering choice within every pinned
-   package's PyPI `requires-python` and published wheels (chgnet 0.3.0 cp39-cp311,
-   dgl 2.1.0 cp38-cp312, torchdata 0.7.1 cp38-cp311); each report records the
-   exact interpreter.  Install only the pinned packages: the script runs from
-   `PYTHONPATH=src`, so installing the project (`-e .`) would let its unpinned
-   `ase`/`numpy` requirements move a model's dependencies.
+   The two SevenNet releases need separate environments.  SevenNet-0 keeps the
+   LiTraj benchmark release, while `7net-omat` first ships in sevenn 0.11.0, which
+   also changes tensor-product ordering and requires `e3nn>=0.5.0`.  To rebuild an
+   environment, install from its lock file rather than from the pins above.
+   Production hardware currently has no GPU, so every environment runs on CPU.
+   This is an operational fact about the current server, not a scientific
+   assumption: the adapters take a `device` argument.
 
-   | Environment (`~/.venvs/<name>`) | Python | Pinned packages | Frozen models |
-   |---|---|---|---|
-   | `e3sse-chgnet-0.3.0` | 3.11 | `chgnet==0.3.0` | `CHGNet-0.3.0` |
-   | `e3sse-matgl-1.2.7` | 3.11 | `matgl==1.2.7`, `dgl==2.1.0`, `torchdata==0.7.1` | `M3GNet-MP-2021.2.8-PES`, `M3GNet-MatPES-PBE-v2025.1-PES` |
-   | `e3sse-mace-0.3.6` | 3.11 | `mace-torch==0.3.6` | `MACE-MP-0-small-2023-12-10` |
-   | `e3sse-sevennet-0.10.1` | 3.11 | `sevenn==0.10.1` | `SevenNet-0-11July2024` |
-   | `e3sse-sevennet-0.11.0` | 3.11 | `sevenn==0.11.0` | `SevenNet-omat` |
+3. The server-only input hashes are pinned: `inputs.g0_audit.sha256`,
+   `inputs.g0_input_manifest.sha256` and `inputs.mplitrj_provenance.manifest_sha256`
+   were read with `sha256sum` from the existing artifacts, without rerunning
+   anything.  `inputs.server_config.sha256` comes from the tracked
+   `configs/server.json`.  Materialization re-hashes all four and fails closed on
+   any mismatch or missing file.  The reviewed commit is the only trust anchor that
+   is not tracked: a commit cannot contain its own SHA, so it is supplied by
+   `--git-sha`.
 
-   ```bash
-   uv venv --python 3.11 ~/.venvs/e3sse-sevennet-0.11.0
-   uv pip install --python ~/.venvs/e3sse-sevennet-0.11.0/bin/python sevenn==0.11.0
-   PYTHONPATH=src ~/.venvs/<env>/bin/python scripts/smoke_test_models.py \
-     --config configs/protocol_freeze.json --model <canonical_name> \
-     --checkpoint <path> --output outputs/model_smoke --resume
-   ```
-
-   The script refuses a package version that differs from the registry and binds
-   ase, dgl, e3nn, numpy, torch and torch_geometric versions into the report
-   fingerprint, so `--resume` rejects a report from a changed environment.  Also
-   archive `uv pip freeze` for each environment next to the smoke reports so every
-   transitive version is reconstructible.  The smoke test uses a
-   synthetic Li2O cell only; it never reads LiTraj data, NEB/MD outcomes, or
-   held-out structures.
-
-3. Pin `inputs.*.sha256` from the production artifacts.  Registration is not a
-   freeze input: materialize the frozen protocol first, submit that exact
-   `protocol.json` to OSF, then record the registration with
+   Registration is not a freeze input: materialize the frozen protocol first,
+   submit that exact `protocol.json` to OSF, then record the registration with
    `scripts/record_registration.py`.  The registration addendum binds the frozen
    protocol ID, `protocol.json` SHA-256 and Git SHA, leaves the protocol ID
    unchanged, and is required before any outcome is unsealed, training included
    (`protocol_frozen_registration_pending` -> `protocol_registered`).  After the
    training-only pilot, deposit the pilot amendment as an OSF update and record it
    with `--pilot-amendment`; test-side outcomes require that registered update.
+
+## Production parallel execution
+
+Studies 1, 2a and 4 run independent work units (frames or hops per model,
+partitions, bootstrap and label-budget replicates, conformal Monte Carlo draws)
+through `src/e3sse/execution/` (skill: `parallel-execution`).  Execution settings
+are operational metadata: they are written to per-invocation JSON manifests under
+`<run>/execution_manifests/` and never enter the protocol, shard fingerprints or
+seeds.  The one exception is the per-process numerical thread configuration.  CPU
+floating-point reductions can depend on it, so it enters shard fingerprints, and a
+production run fixes it.
+
+- Workers: `--workers N` or `--workers auto`.  There is no project default above 1,
+  because the right count differs by model and workload.  `auto` and explicit counts
+  both satisfy `workers x threads_per_worker <= usable CPUs` (affinity mask) and
+  `workers x measured per-worker peak <= MemAvailable - reserve` (default reserve
+  2 GiB, `--memory-reserve-gib`).  Swap is never counted as capacity.  `auto`
+  refuses to run without a measured per-worker memory instead of guessing.  Workers
+  are capped at the number of units.
+- Per-worker memory: measure once per model, thread count and largest frame size,
+  in the model's environment.  This is operational and not a smoke-test rerun:
+
+  ```bash
+  TMPDIR=/srv/ben/e3sse/scratch PYTHONPATH=src ~/.venvs/<env>/bin/python \
+    scripts/probe_model_worker_memory.py --config configs/protocol_freeze.json \
+    --model <canonical_name> --checkpoint <path> --min-atoms <largest frame atoms> \
+    --threads-per-worker <t> --output outputs/execution_resources \
+    --protected-root /srv/ben/e3sse/data --resume
+  ```
+
+  Take `--min-atoms` from atom counts in the frozen input manifest, never from DFT
+  labels.  Planning uses 1.5x the measured VmHWM.
+- Nested threading: the parent sets `OMP_NUM_THREADS`, `MKL_NUM_THREADS`,
+  `OPENBLAS_NUM_THREADS`, `NUMEXPR_NUM_THREADS` and `VECLIB_MAXIMUM_THREADS` to
+  `threads_per_worker` before starting a `spawn` pool, because OpenMP/BLAS
+  runtimes, including the one DGL uses, read them at load time.  The worker
+  initializer then fixes PyTorch inter-op threads to 1 (`set_num_interop_threads`
+  works only once and before any inter-op work), sets intra-op threads to
+  `threads_per_worker`, and verifies both before loading the model once per worker.
+  `fork` is never used with initialized torch or OpenMP state.
+- MLIP versus statistics: MLIP inference is RAM-bound on the current server
+  (80 CPUs, about 19 GiB RAM).  Expect few workers, each with one or a few threads,
+  sized by the probe.  Bootstrap and Monte Carlo workloads use one thread per worker
+  and a small footprint, so they can use more CPUs under their own policy.
+- NUMA: no binding.  The kernel's default local allocation, with fallback to the
+  nearer node, keeps workers working when one roughly 9.5 GiB node fills.  Hard
+  binding could kill a worker for lack of memory on one node while the other node
+  still has free memory.  The topology is recorded in each manifest.
+- Granularity: a shard is a whole scientific unit.  One frozen RNG stream (for
+  example one bootstrap analysis) never spans shards, and a shard never spans
+  partitions, chemical systems, or the calibration and test sides.  Reducers order
+  results by scientific keys, never by shard ID.
+- Determinism: shard IDs are content hashes of canonical identifiers.  Seeds come
+  only from `analysis_seed` over canonical identifiers and replicate indices.
+  Results are merged in shard-ID order, so worker count, completion order, PID and
+  scheduling cannot change any checkpoint byte or the merged SHA-256.
+- Resume: the run directory binds the run identity and the shard set, and one
+  orchestrator holds it at a time (`.run.lock`).  Verified shards are reused.  Missing shards are rerun.  A stale shard
+  fingerprint, a changed run identity (code, config, model, environment lock,
+  inputs) or a corrupt checkpoint stops the run.  Only the parent publishes, each
+  file once (create-new hard link), under the output root.  Outputs may not overlap
+  the protected data roots.  A failed or killed worker never produces a result;
+  completed siblings are kept and the run exits non-zero without a merged digest.
+- Server notes: set `TMPDIR` to the ext4 output disk (`/tmp` is about 9.6 GiB of
+  RAM-backed tmpfs).  The parent holds one checkpoint file open at a time, well
+  under the 1024 open-file limit.  There is no scheduler, so other load can change
+  `MemAvailable` during a run: re-plan before each production invocation.
+
+Boundary: Study-specific runners (frame selection, inference record schema,
+`e3sse.mlip.inference.run.v1` manifest, batching) belong to each study's
+implementation.  They supply `scientific_identity` (Git SHA and code hash, config
+SHA-256, model identity, environment-lock SHA-256, input manifest SHA-256), shards
+and a task.  This layer supplies bounded, resumable, deterministic execution and
+the operational record.
+
+Design sources: Python `concurrent.futures` and `multiprocessing` (start methods,
+`BrokenProcessPool`; `Executor.map` only bounds its buffer from 3.14, so submission
+uses an explicit sliding window); PyTorch multiprocessing notes (per-process
+threads at most floor(N/M); avoid fork after runtime initialization) and
+`torch.set_num_interop_threads`; NumPy parallel random generation (seeds keyed by
+unique, deterministically created IDs, never `seed + worker_id`) and NumPy BLAS
+thread control; DGL CPU best practices (OpenMP threads); Linux NUMA memory policy
+(local allocation with distance-ordered fallback); `/proc/meminfo` MemAvailable and
+`/proc/<pid>/status` VmHWM.

@@ -118,3 +118,64 @@ def complete_inference_record(record: dict) -> dict:
         config_hash=record["config_hash"],
     )
     return record
+
+
+def production_evidence(models: list[dict], root=None, unit_evidence=None) -> dict:
+    """Pinned production evidence binding one passed smoke report to each model.
+
+    With ``root`` the reports, locks and unit evidence are written as real files so
+    materialization can re-hash them; otherwise digests are placeholders.
+    """
+
+    import hashlib
+    import json
+    from pathlib import Path
+
+    def pin(name: str, content: dict) -> dict:
+        if root is None:
+            return {"path": f"/evidence/{name}", "sha256": "9" * 64}
+        path = Path(root) / "evidence" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(content, sort_keys=True))
+        return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+    environments: dict[str, dict] = {}
+    reports: dict[str, dict] = {}
+    for model in models:
+        environment = f"env-{model['package_name']}-{model['package_version']}"
+        entry = environments.setdefault(environment, {
+            "environment_lock": pin(f"{environment}.txt", {"lock": environment}),
+            "python_version": "3.11.16",
+            "pinned_packages": {model["package_name"]: model["package_version"],
+                                "numpy": "1.26.4"},
+            "lock_recorded_pins": {},
+            "environment_variables": {},
+            "models": [],
+        })
+        entry["models"].append(model["canonical_name"])
+        report = {
+            "fingerprint": {
+                "model": model,
+                "checkpoint_sha256": model["weights_sha256"],
+                "package_version": model["package_version"],
+                "adapter_version": model["adapter_version"],
+                "smoke_test_version": "e3sse-unit-smoke-v3",
+                "git_sha": "b" * 40,
+                "git_dirty": False,
+                "dependency_versions": {"numpy": "1.26.4"},
+            },
+            "result": {"passed": True},
+            "python": "3.11.16 (main) [GCC]",
+        }
+        reports[model["canonical_name"]] = {
+            **pin(f"{model['canonical_name']}.json", report),
+            "runtime_environment": environment,
+        }
+    return {
+        "unit_evidence": pin(
+            "unit_evidence.json",
+            {"schema_version": "e3sse.unit-evidence.v2", **(unit_evidence or {})},
+        ),
+        "runtime_environments": environments,
+        "model_smoke_reports": reports,
+    }

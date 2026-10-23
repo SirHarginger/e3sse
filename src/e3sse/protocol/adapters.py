@@ -22,6 +22,9 @@ from typing import Any
 ADAPTER_VERSION = "e3sse-ase-adapter-v1"
 _GPA_TO_EV_PER_A3 = 1.0 / 160.21766208
 SMOKE_TEST_VERSION = "e3sse-unit-smoke-v3"
+# Transitive packages whose versions change model numerics (e.g. e3nn CG conventions);
+# smoke reports record them, so the freeze can verify these pins.
+SMOKE_RECORDED_DEPENDENCIES = ("ase", "dgl", "e3nn", "numpy", "torch", "torch_geometric")
 
 
 def checkpoint_digest(path: Path) -> str:

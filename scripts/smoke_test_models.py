@@ -21,15 +21,13 @@ from pathlib import Path
 
 from e3sse.protocol.adapters import (
     ADAPTER_VERSION,
+    SMOKE_RECORDED_DEPENDENCIES,
     SMOKE_TEST_VERSION,
     build_calculator,
     canonical_json_sha256,
     checkpoint_digest,
     smoke_test,
 )
-
-# Transitive packages whose versions change model numerics (e.g. e3nn CG conventions).
-RECORDED_DEPENDENCIES = ("ase", "dgl", "e3nn", "numpy", "torch", "torch_geometric")
 
 
 def _installed_version(name: str) -> str | None:
@@ -73,7 +71,9 @@ def main(argv: list[str] | None = None) -> int:
         "smoke_test_version": SMOKE_TEST_VERSION,
         "model": model,
         "package_version": importlib.metadata.version(model["package_name"]),
-        "dependency_versions": {name: _installed_version(name) for name in RECORDED_DEPENDENCIES},
+        "dependency_versions": {
+            name: _installed_version(name) for name in SMOKE_RECORDED_DEPENDENCIES
+        },
         "git_sha": git_sha.strip(),
     }
     fingerprint_sha = canonical_json_sha256(fingerprint)

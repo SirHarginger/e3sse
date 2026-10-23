@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import re
 import shlex
 import subprocess
 import sys
@@ -24,6 +25,7 @@ from e3sse.data.dataset_audit import SCHEMA_VERSION as G0_SCHEMA
 from e3sse.data.litraj_provenance import parse_edge_id
 from e3sse.data.mplitrj_provenance import SCHEMA_VERSION as PROVENANCE_SCHEMA
 from e3sse.data.mplitrj_provenance import material_bucket
+from e3sse.data.unit_evidence import EVIDENCE_SCHEMA as UNIT_EVIDENCE_SCHEMA
 
 from .chemistry import ANION_FAMILY_RULE_ID, anion_family, composition_counts
 from .configuration import (
@@ -135,6 +137,151 @@ def _atomic_json(path: Path, value: Any) -> None:
 def _resolve(base: Path, value: str) -> Path:
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+
+_CONVERGENCE_FLAG_COLUMN = re.compile(r"conver|fail|monoton|flag|status", re.IGNORECASE)
+
+
+def _bind_unit_evidence(
+    unit_report: Mapping[str, Any] | None,
+    g0_inputs: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+    data_root: Path,
+) -> None:
+    """The unit evidence must describe the exact files this freeze is built from."""
+
+    if unit_report is None:
+        return
+    mplitrj_known = {source.get("sha256") for source in provenance.get("flattened_sources", [])}
+    mplitrj_known |= {entry.get("sha256") for entry in g0_inputs["inputs"].get("MPLiTrj", [])}
+    neb_known = set()
+    for entry in g0_inputs["inputs"].get("nebDFT2k", []):
+        if entry.get("sha256") is not None:
+            neb_known.add(entry["sha256"])
+        elif str(entry.get("identifier", "")).endswith(".csv"):
+            neb_known.add(file_sha256(_safe_member(data_root, entry["identifier"])))
+    splits = unit_report.get("mplitrj") or {}
+    if set(splits) != {"train", "val", "test"} or any(
+        (record or {}).get("sha256") not in mplitrj_known - {None} for record in splits.values()
+    ):
+        raise ProtocolFreezeError("unit evidence was not collected from the pinned MPLiTrj files")
+    neb = unit_report.get("nebdft2k") or {}
+    if neb.get("index_sha256") not in neb_known:
+        raise ProtocolFreezeError("unit evidence was not collected from the pinned nebDFT2k index")
+    flagged = [c for c in neb.get("index_columns") or [] if _CONVERGENCE_FLAG_COLUMN.search(c)]
+    if flagged or not neb.get("index_columns"):
+        # The registered resolution says no convergence flag exists; revisit it.
+        raise ProtocolFreezeError(f"nebDFT2k index columns contradict the flag resolution: {flagged}")
+
+
+def _verify_production_evidence(
+    config: Mapping[str, Any], base: Path
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Re-hash the pinned production evidence and bind each smoke report to its model.
+
+    Missing or unpinned entries are freeze blockers reported by the configuration
+    check; anything pinned must exist and match, or materialization stops.
+    """
+
+    evidence = config["inputs"].get("production_evidence")
+    if not isinstance(evidence, Mapping):
+        return None, None
+
+    def pinned(record: Any, label: str) -> dict[str, str] | None:
+        if not isinstance(record, Mapping) or not isinstance(record.get("path"), str):
+            return None
+        digest = record.get("sha256")
+        if not isinstance(digest, str) or len(digest) != 64:
+            return None
+        _expect_hash(_resolve(base, record["path"]), digest, label)
+        return {"path": record["path"], "sha256": digest}
+
+    models = {
+        model["canonical_name"]: model
+        for group in ("A", "B1", "B2")
+        for model in config["protocol"]["model_groups"].get(group, [])
+        if isinstance(model, Mapping) and "canonical_name" in model
+    }
+    unit_evidence = pinned(evidence.get("unit_evidence"), "unit evidence report")
+    unit_report = None
+    if unit_evidence is not None:
+        unit_report = _load_json(_resolve(base, unit_evidence["path"]))
+        if not isinstance(unit_report, Mapping) or unit_report.get(
+            "schema_version"
+        ) != UNIT_EVIDENCE_SCHEMA:
+            raise ProtocolFreezeError("pinned unit evidence is not a unit-evidence report")
+        unit_report = dict(unit_report)
+    environments = evidence.get("runtime_environments") or {}
+    verified: dict[str, Any] = {
+        "unit_evidence": unit_evidence,
+        "runtime_environments": {},
+        "model_smoke_reports": {},
+    }
+    for name, environment in sorted(environments.items()):
+        if not isinstance(environment, Mapping):
+            continue
+        verified["runtime_environments"][name] = {
+            **{key: environment.get(key) for key in (
+                "python_version", "pinned_packages", "lock_recorded_pins",
+                "environment_variables", "models",
+            )},
+            "environment_lock": pinned(
+                environment.get("environment_lock"), f"environment lock {name}"
+            ),
+        }
+    for name, record in sorted((evidence.get("model_smoke_reports") or {}).items()):
+        identity = pinned(record, f"smoke report {name}")
+        if identity is None:
+            continue
+        report = _load_json(_resolve(base, record["path"]))
+        if not isinstance(report, Mapping):
+            raise ProtocolFreezeError(f"smoke report {name} is not a JSON object")
+        fingerprint = report.get("fingerprint") or {}
+        model = models.get(name, {})
+        environment = environments.get(record.get("runtime_environment")) or {}
+        recorded = fingerprint.get("dependency_versions") or {}
+
+        def same(actual: Any, wanted: Any) -> bool:
+            return wanted is not None and actual == wanted
+
+        expected = {
+            "canonical_name": same((fingerprint.get("model") or {}).get("canonical_name"), name),
+            "checkpoint_sha256": same(
+                fingerprint.get("checkpoint_sha256"), model.get("weights_sha256")
+            ),
+            "package_version": same(fingerprint.get("package_version"), model.get("package_version")),
+            "adapter_version": same(fingerprint.get("adapter_version"), model.get("adapter_version")),
+            "clean_tree": fingerprint.get("git_dirty") is False,
+            "passed": (report.get("result") or {}).get("passed") is True,
+            # The report must have run in the environment it is pinned to.
+            "python_version": same(
+                str(report.get("python", "")).split(" ", 1)[0], environment.get("python_version")
+            ),
+            "dependency_versions": all(
+                package == model.get("package_name") or recorded.get(package) == version
+                for package, version in (environment.get("pinned_packages") or {}).items()
+            ),
+        }
+        failed = sorted(check for check, ok in expected.items() if not ok)
+        if failed:
+            raise ProtocolFreezeError(f"smoke report {name} does not bind its model: {failed}")
+        verified["model_smoke_reports"][name] = {
+            **identity,
+            "runtime_environment": record.get("runtime_environment"),
+            "smoke_test_version": fingerprint.get("smoke_test_version"),
+            "smoke_git_sha": fingerprint.get("git_sha"),
+        }
+    return verified, unit_report
+
+
+def _evidence_digests(value: Any) -> Any:
+    """Evidence identity without host paths: moving files must not change protocol_id."""
+
+    if isinstance(value, Mapping):
+        return {key: _evidence_digests(item) for key, item in value.items() if key != "path"}
+    if isinstance(value, list):
+        return [_evidence_digests(item) for item in value]
+    return value
 
 
 def _git(root: Path, *args: str) -> str:
@@ -1029,11 +1176,15 @@ def materialize_protocol(
     if audit.get("configuration", {}).get("sha256") != server_sha:
         raise ProtocolFreezeError("G0 was not produced from the supplied server config")
     server_config = _load_json(server_path)
+    production_evidence, unit_report = _verify_production_evidence(config, base)
 
     provenance_spec = config["inputs"]["mplitrj_provenance"]
     provenance_root = _resolve(base, provenance_spec["root"])
     provenance, provenance_sha, provenance_records = _validate_provenance(
         provenance_root, provenance_spec, audit
+    )
+    _bind_unit_evidence(
+        unit_report, g0_inputs, provenance, Path(server_config["paths"]["data_root"])
     )
 
     linkage_spec = config["inputs"].get("material_chemical_system_linkage")
@@ -1193,6 +1344,9 @@ def materialize_protocol(
         units=config["protocol"]["unit_contract"],
         config=config,
     )
+    # Identities of the immutable evidence the static freeze rests on; the smoke
+    # reports carry the commit they ran at, which is evidence, not this protocol's SHA.
+    protocol["production_evidence"] = _evidence_digests(production_evidence)
     blockers = list(configuration_state.freeze_blockers)
     missing_compositions = anion_families["materials_without_composition"]
     if missing_compositions:
@@ -1227,6 +1381,7 @@ def materialize_protocol(
         "server_config": server_sha,
         "material_chemical_system_linkage": linkage_sha,
         **{f"source_document:{name}": digest for name, digest in source_documents.items()},
+        "production_evidence": canonical_sha256(production_evidence),
     }
     fingerprint = canonical_sha256(
         {

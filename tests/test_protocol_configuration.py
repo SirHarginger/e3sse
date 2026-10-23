@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 
 import pytest
-from protocol_fixtures import canonical_units, resolved_register
+from protocol_fixtures import canonical_units, production_evidence, resolved_register
 
 from e3sse.protocol.chemistry import (
     ANION_FAMILY_RULE_ID,
@@ -80,6 +80,9 @@ def _production_config() -> dict:
                 "sha256": digest,
             },
             "material_chemical_system_linkage": None,
+            "production_evidence": production_evidence(
+                [_model("A", index) for index in range(4)] + [_model("B1"), _model("B2")]
+            ),
         },
         "source_documents": {"design": {"path": "design.docx", "sha256": digest}},
         "protocol": {

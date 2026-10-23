@@ -15,6 +15,7 @@ from typing import Any
 
 from ase.data import atomic_numbers
 
+from .adapters import SMOKE_RECORDED_DEPENDENCIES
 from .chemistry import (
     ANION_FAMILY_RULE_ID,
     TM_RULE_ID,
@@ -248,6 +249,75 @@ def _validate_trust_anchors(config: Mapping[str, Any], inputs: Mapping[str, Any]
         raise ProtocolConfigurationError("; ".join(errors))
 
 
+def _validate_production_evidence(inputs: Mapping[str, Any], protocol: Mapping[str, Any]) -> None:
+    """Pinned unit evidence, one passed smoke report per frozen model, and the locked
+    runtime environment each report ran in, consistent with the model registry."""
+
+    evidence = _mapping(inputs.get("production_evidence"), "inputs.production_evidence")
+    unit = _mapping(evidence.get("unit_evidence"), "production_evidence.unit_evidence")
+    _require_nonempty(unit, ("path",), "production_evidence.unit_evidence")
+    _require_sha(unit.get("sha256"), "production_evidence.unit_evidence.sha256")
+    environments = _mapping(
+        evidence.get("runtime_environments"), "production_evidence.runtime_environments"
+    )
+    reports = _mapping(evidence.get("model_smoke_reports"), "production_evidence.model_smoke_reports")
+    groups = _mapping(protocol.get("model_groups"), "protocol.model_groups")
+    models = {
+        model["canonical_name"]: model
+        for group in ("A", "B1", "B2")
+        for model in groups.get(group, [])
+        if isinstance(model, Mapping) and _nonempty(model.get("canonical_name"))
+    }
+    if set(reports) != set(models):
+        raise ProtocolConfigurationError(
+            "production_evidence.model_smoke_reports must cover exactly the frozen models: "
+            f"missing {sorted(set(models) - set(reports))}, extra {sorted(set(reports) - set(models))}"
+        )
+    for env_name, value in environments.items():
+        label = f"production_evidence.runtime_environments.{env_name}"
+        environment = _mapping(value, label)
+        lock = _mapping(environment.get("environment_lock"), f"{label}.environment_lock")
+        _require_nonempty(lock, ("path",), f"{label}.environment_lock")
+        _require_sha(lock.get("sha256"), f"{label}.environment_lock.sha256")
+        _require_nonempty(environment, ("python_version",), label)
+        if not isinstance(environment.get("pinned_packages"), Mapping):
+            raise ProtocolConfigurationError(f"{label}.pinned_packages must be an object")
+        if not isinstance(environment.get("models"), list):
+            raise ProtocolConfigurationError(f"{label}.models must be a list")
+        checkable = set(SMOKE_RECORDED_DEPENDENCIES) | {
+            models[name]["package_name"] for name in environment["models"] if name in models
+        }
+        unverifiable = sorted(set(environment["pinned_packages"]) - checkable)
+        if unverifiable:
+            # Pins no smoke report records are evidenced only by the lock file.
+            raise ProtocolConfigurationError(
+                f"{label}.pinned_packages {unverifiable} are not recorded by smoke reports; "
+                "list them under lock_recorded_pins"
+            )
+    for name, value in sorted(reports.items()):
+        label = f"production_evidence.model_smoke_reports.{name}"
+        report = _mapping(value, label)
+        _require_nonempty(report, ("path", "runtime_environment"), label)
+        _require_sha(report.get("sha256"), f"{label}.sha256")
+        environment = environments.get(report["runtime_environment"])
+        if not isinstance(environment, Mapping):
+            raise ProtocolConfigurationError(f"{label} names an unknown runtime environment")
+        if name not in environment.get("models", []):
+            raise ProtocolConfigurationError(f"{label}: runtime environment does not list {name}")
+        model = models[name]
+        pinned = environment["pinned_packages"].get(model["package_name"])
+        if pinned != model["package_version"]:
+            raise ProtocolConfigurationError(
+                f"{label}: environment pins {model['package_name']}=={pinned}, registry "
+                f"requires {model['package_version']}"
+            )
+    listed = [name for env in environments.values() for name in env.get("models", [])]
+    if sorted(listed) != sorted(models):
+        raise ProtocolConfigurationError(
+            "each frozen model must run in exactly one production runtime environment"
+        )
+
+
 def _validate_resolution(name: str, record: Mapping[str, Any]) -> None:
     fields = _RESOLUTION_FIELDS[name]
     if record.get("status") != "resolved" or not _nonempty(record.get("evidence")):
@@ -385,6 +455,7 @@ def freeze_blockers(config: Mapping[str, Any]) -> tuple[str, ...]:
     resolutions = _mapping(protocol["scientific_resolutions"], "scientific_resolutions")
     checks: list[tuple[str, Callable[[], None]]] = [
         ("trust_anchors", lambda: _validate_trust_anchors(config, inputs)),
+        ("production_evidence", lambda: _validate_production_evidence(inputs, protocol)),
         (
             "unit_contract",
             lambda: validate_unit_contract(_mapping(protocol["unit_contract"], "unit_contract")),

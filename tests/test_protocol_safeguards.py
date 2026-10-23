@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from protocol_fixtures import production_evidence
 from test_protocol_configuration import _model, _production_config
 from test_protocol_freeze import _phase_b_fixture, _sha, _write
 
@@ -186,7 +187,7 @@ def test_only_registered_unit_conversions_resolve():
         unit_conversion_id("kcal/mol", "eV")
 
 
-def test_canonical_units_are_frozen_while_source_units_await_production_evidence():
+def test_canonical_units_are_frozen_and_source_units_are_production_evidenced():
     template = json.loads(Path("configs/protocol_freeze.json").read_text(encoding="utf-8"))
     units = template["protocol"]["unit_contract"]
     assert {name: record["canonical_analysis_unit"] for name, record in units.items()} == {
@@ -200,8 +201,19 @@ def test_canonical_units_are_frozen_while_source_units_await_production_evidence
         "barrier": "eV",
         "temperature": "K",
     }
+    validate_unit_contract(units)
+    for name in ("position", "cell", "dft_energy", "dft_force", "stress", "barrier"):
+        evidence = units[name]["production_source_unit_evidence"]
+        assert evidence["status"] == "verified" and evidence["conversion"] == "identity"
+        assert "4b7c4b9c558e5e749cc0065062d9acc63aeccde41a4fca0d451856aa28fa330d" in (
+            evidence["evidence"]
+        )
+    unproven = copy.deepcopy(units)
+    unproven["dft_force"]["production_source_unit_evidence"].update(
+        {"source_unit": None, "conversion": None, "status": "unresolved", "evidence": None}
+    )
     with pytest.raises(ValueError, match="production source-unit evidence unresolved"):
-        validate_unit_contract(units)
+        validate_unit_contract(unproven)
     shifted = copy.deepcopy(units)
     shifted["barrier"]["canonical_analysis_unit"] = "meV"
     with pytest.raises(ValueError, match="canonical analysis units differ"):
@@ -242,6 +254,21 @@ def _clean_repository(monkeypatch):
     )
 
 
+def _unit_evidence_for(config: dict) -> dict:
+    """Synthetic unit evidence collected from exactly the fixture's pinned files."""
+
+    root = Path(config["inputs"]["mplitrj_provenance"]["root"])
+    sources = json.loads((root / "manifest.json").read_text())["flattened_sources"]
+    g0_inputs = json.loads(Path(config["inputs"]["g0_input_manifest"]["path"]).read_text())
+    return {
+        "mplitrj": {s["published_split"]: {"sha256": s["sha256"]} for s in sources},
+        "nebdft2k": {
+            "index_sha256": g0_inputs["inputs"]["nebDFT2k"][0]["sha256"],
+            "index_columns": ["edge_id", "material_id", "chemsys", "_split"],
+        },
+    }
+
+
 def _production_fixture(tmp_path: Path, *, complete: bool) -> Path:
     config_path, _audit = _phase_b_fixture(tmp_path)
     config = json.loads(config_path.read_text())
@@ -265,6 +292,11 @@ def _production_fixture(tmp_path: Path, *, complete: bool) -> Path:
             "B2": [_model("B2")],
             "C": [],
         }
+        config["inputs"]["production_evidence"] = production_evidence(
+            [m for group in ("A", "B1", "B2") for m in config["protocol"]["model_groups"][group]],
+            root=tmp_path,
+            unit_evidence=_unit_evidence_for(config),
+        )
     else:
         config["inputs"]["g0_audit"]["sha256"] = None
         config["protocol"]["unit_contract"]["dft_force"]["production_source_unit_evidence"].update(
@@ -615,20 +647,32 @@ def test_transport_branch_is_blocked_when_fpmd_fails_g0(tmp_path):
     assert protocol["static_branch_status"] == "ready"
 
 
-def test_checked_in_template_leaves_only_production_and_registration_blockers():
+def test_checked_in_template_leaves_only_server_only_input_pins_as_blockers():
     from e3sse.protocol.configuration import assess_production_configuration
 
     template = json.loads(Path("configs/protocol_freeze.json").read_text(encoding="utf-8"))
     state = assess_production_configuration(template)
     assert state.production_eligible is False
     joined = "\n".join(state.freeze_blockers)
-    for item in (
-        "repository_git_sha must be pinned",
-        "production source-unit evidence unresolved",
-        "production_source_unit_evidence",
-        "nebdft2k_convergence_flag_availability",
-    ):
-        assert item in joined
+    # Only the reviewed commit remains: a commit cannot contain its own SHA, so it is
+    # supplied by --git-sha at materialization (the tracked value stays CURRENT).
+    assert list(state.freeze_blockers) == ["production repository_git_sha must be pinned"]
+    assert template["inputs"]["repository_git_sha"] == "CURRENT"
+    inputs = template["inputs"]
+    assert inputs["g0_audit"]["sha256"] == (
+        "9caca0f02d242af7d70c5149a70ded230f7316d27b410f7cad4755207e40d468"
+    )
+    assert inputs["g0_input_manifest"]["sha256"] == (
+        "5dc454f6c70aa91e26d151118eb8236010c3f28ec1c53767aa574e16049d4c8d"
+    )
+    assert inputs["mplitrj_provenance"]["manifest_sha256"] == (
+        "9fa71143d1bb75281577d0258e9e8c23fe17e1d7b34278c9193fea2d7f5a2491"
+    )
+    with_commit = copy.deepcopy(template)
+    with_commit["inputs"]["repository_git_sha"] = "a" * 40
+    assert assess_production_configuration(with_commit).production_eligible is True
+    assert "/srv/" not in json.dumps(template["protocol"])  # host paths stay out of identity
+    assert template["inputs"]["server_config"]["sha256"] == _sha(Path("configs/server.json"))
     assert "preregistration" not in joined
     for resolved in (
         "transition_metal_hubbard_u_machine_predicate",
@@ -641,6 +685,9 @@ def test_checked_in_template_leaves_only_production_and_registration_blockers():
         "group_c_fine_tuned_comparator",
         "ml_energy",
         "temperature",
+        "production_source_unit_evidence",
+        "nebdft2k_convergence_flag_availability",
+        "production_evidence",
     ):
         assert resolved not in joined
     units = template["protocol"]["unit_contract"]
