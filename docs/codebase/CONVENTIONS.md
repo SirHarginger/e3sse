@@ -36,7 +36,16 @@
 - Filesystem boundaries use `tmp_path`; production datasets are not copied.
 - Coverage threshold: [TODO] no threshold is configured.
 
-### 6) Evidence
+### 6) Publication Figure Conventions
+
+Not yet implemented; applies to future manuscript figures.
+
+- Seaborn for statistical/data visualization.
+- Matplotlib object-oriented `Figure`/`Axes` API for layout, axes, ticks, annotations, legends, and export (no `pyplot` state machine for composition).
+- Plot scripts carry semantic names tied to the scientific content (e.g. `plot_softening_scale_by_family.py`), never `fig1.py`.
+- Vector PDF is the canonical manuscript output; high-resolution raster exports only where needed.
+
+### 7) Evidence
 
 - `pyproject.toml`
 - `tests/test_dataset_audit.py`

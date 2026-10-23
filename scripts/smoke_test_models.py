@@ -3,8 +3,9 @@
 
 Each model runs in its own pinned environment.  The report is written atomically to
 ``<output>/<canonical_name>.json`` and binds the checkpoint SHA-256, adapter and
-smoke-test versions, package version, and Git SHA.  ``--resume`` reuses an existing
-report only when that fingerprint is unchanged and rejects a stale one.
+smoke-test versions, package and key dependency versions, and Git SHA.  ``--resume``
+reuses an existing report only when that fingerprint is unchanged and rejects a stale
+one.
 """
 
 from __future__ import annotations
@@ -26,6 +27,16 @@ from e3sse.protocol.adapters import (
     checkpoint_digest,
     smoke_test,
 )
+
+# Transitive packages whose versions change model numerics (e.g. e3nn CG conventions).
+RECORDED_DEPENDENCIES = ("ase", "dgl", "e3nn", "numpy", "torch", "torch_geometric")
+
+
+def _installed_version(name: str) -> str | None:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def _model_entry(config: dict, name: str) -> dict:
@@ -62,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         "smoke_test_version": SMOKE_TEST_VERSION,
         "model": model,
         "package_version": importlib.metadata.version(model["package_name"]),
+        "dependency_versions": {name: _installed_version(name) for name in RECORDED_DEPENDENCIES},
         "git_sha": git_sha.strip(),
     }
     fingerprint_sha = canonical_json_sha256(fingerprint)

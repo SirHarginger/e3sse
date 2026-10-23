@@ -216,16 +216,42 @@ Before the final materialization on the server, at the reviewed commit:
    dft_energy, dft_force, stress and barrier (barrier = max - min of DFT image
    energies, LiTraj `litraj.utils.get_barrier`), and resolve
    `nebdft2k_convergence_flag_availability` from `index_columns`.
-2. Regenerate the model smoke reports with each pinned model environment
-   (`chgnet==0.3.0`; `matgl==1.2.7` + `dgl==2.1.0` + `torchdata==0.7.1`;
-   `mace-torch==0.3.6`; `sevenn==0.10.1`) and checkpoints matching the registry
-   SHA-256 values:
+2. Regenerate the model smoke reports, each in its own isolated environment
+   pinned to the registry `package_version`, with checkpoints matching the
+   registry SHA-256 values.  Environments are never shared across package
+   versions; in particular the two SevenNet releases need separate environments
+   (SevenNet-0 keeps the LiTraj benchmark release, while `7net-omat` first ships
+   in sevenn 0.11.0, which also changes tensor-product ordering and requires
+   `e3nn>=0.5.0`).  Python 3.11 is an engineering choice within every pinned
+   package's PyPI `requires-python` and published wheels (chgnet 0.3.0 cp39-cp311,
+   dgl 2.1.0 cp38-cp312, torchdata 0.7.1 cp38-cp311); each report records the
+   exact interpreter.  Install only the pinned packages: the script runs from
+   `PYTHONPATH=src`, so installing the project (`-e .`) would let its unpinned
+   `ase`/`numpy` requirements move a model's dependencies.
+
+   | Environment (`~/.venvs/<name>`) | Python | Pinned packages | Frozen models |
+   |---|---|---|---|
+   | `e3sse-chgnet-0.3.0` | 3.11 | `chgnet==0.3.0` | `CHGNet-0.3.0` |
+   | `e3sse-matgl-1.2.7` | 3.11 | `matgl==1.2.7`, `dgl==2.1.0`, `torchdata==0.7.1` | `M3GNet-MP-2021.2.8-PES`, `M3GNet-MatPES-PBE-v2025.1-PES` |
+   | `e3sse-mace-0.3.6` | 3.11 | `mace-torch==0.3.6` | `MACE-MP-0-small-2023-12-10` |
+   | `e3sse-sevennet-0.10.1` | 3.11 | `sevenn==0.10.1` | `SevenNet-0-11July2024` |
+   | `e3sse-sevennet-0.11.0` | 3.11 | `sevenn==0.11.0` | `SevenNet-omat` |
 
    ```bash
-   PYTHONPATH=src <env>/bin/python scripts/smoke_test_models.py \
+   uv venv --python 3.11 ~/.venvs/e3sse-sevennet-0.11.0
+   uv pip install --python ~/.venvs/e3sse-sevennet-0.11.0/bin/python sevenn==0.11.0
+   PYTHONPATH=src ~/.venvs/<env>/bin/python scripts/smoke_test_models.py \
      --config configs/protocol_freeze.json --model <canonical_name> \
      --checkpoint <path> --output outputs/model_smoke --resume
    ```
+
+   The script refuses a package version that differs from the registry and binds
+   ase, dgl, e3nn, numpy, torch and torch_geometric versions into the report
+   fingerprint, so `--resume` rejects a report from a changed environment.  Also
+   archive `uv pip freeze` for each environment next to the smoke reports so every
+   transitive version is reconstructible.  The smoke test uses a
+   synthetic Li2O cell only; it never reads LiTraj data, NEB/MD outcomes, or
+   held-out structures.
 
 3. Pin `inputs.*.sha256` from the production artifacts.  Registration is not a
    freeze input: materialize the frozen protocol first, submit that exact

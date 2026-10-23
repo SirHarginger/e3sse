@@ -78,7 +78,7 @@
           "source_unit": "eV",
           "conversion": "identity",
           "status": "verified",
-          "evidence": "adapter e3sse-ase-adapter-v1 (src/e3sse/protocol/adapters.py) wraps each frozen checkpoint's ASE calculator with explicit unit options; smoke test e3sse-unit-smoke-v3 passed for all six checkpoints (extensive total energy, F = -dE/dx, eV/A^3 stress); reports are regenerated at the reviewed commit by scripts/smoke_test_models.py"
+          "evidence": "adapter e3sse-ase-adapter-v1 (src/e3sse/protocol/adapters.py) wraps each frozen checkpoint's ASE calculator with explicit unit options; each of the six checkpoints must pass smoke test e3sse-unit-smoke-v3 (extensive total energy, F = -dE/dx, eV/A^3 stress) in its pinned environment at the reviewed commit, reported by scripts/smoke_test_models.py as outputs/model_smoke/<canonical_name>.json; earlier development passes predate the SevenNet-omat re-pin to sevenn 0.11.0 and are not registration evidence"
         }
       },
       "dft_force": {
@@ -96,7 +96,7 @@
           "source_unit": "eV/angstrom",
           "conversion": "identity",
           "status": "verified",
-          "evidence": "adapter e3sse-ase-adapter-v1 (src/e3sse/protocol/adapters.py) wraps each frozen checkpoint's ASE calculator with explicit unit options; smoke test e3sse-unit-smoke-v3 passed for all six checkpoints (extensive total energy, F = -dE/dx, eV/A^3 stress); reports are regenerated at the reviewed commit by scripts/smoke_test_models.py"
+          "evidence": "adapter e3sse-ase-adapter-v1 (src/e3sse/protocol/adapters.py) wraps each frozen checkpoint's ASE calculator with explicit unit options; each of the six checkpoints must pass smoke test e3sse-unit-smoke-v3 (extensive total energy, F = -dE/dx, eV/A^3 stress) in its pinned environment at the reviewed commit, reported by scripts/smoke_test_models.py as outputs/model_smoke/<canonical_name>.json; earlier development passes predate the SevenNet-omat re-pin to sevenn 0.11.0 and are not registration evidence"
         }
       },
       "stress": {
@@ -290,7 +290,9 @@
           "load_options": {
             "calculator": "sevenn.sevennet_calculator.SevenNetCalculator"
           },
-          "license_identifier": "MIT",
+          "license_identifier": "GPL-3.0 (GNU GPL v3; historical sevenn 0.10.1 release, not the current MIT repository license)",
+          "checkpoint_license": "GPL-3.0: the checkpoint ships inside the sevenn 0.10.1 sdist/wheel and no separate weights license is declared",
+          "license_evidence": "sevenn 0.10.1 sdist LICENSE (SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986, verbatim GPLv3 text; no 'or later' notice found in the package source), pyproject license = {file = LICENSE}, PyPI classifier 'License :: OSI Approved :: GNU General Public License v3 (GPLv3)'; GitHub tag v0.10.1 LICENSE is GPLv3; upstream relicensed to MIT in commit 44ab70f94e (2025-06-20), first released in v0.12.0; verified 2026-10-23",
           "element_coverage": "89 chemical species",
           "benchmark_identity": "LiTraj Methods: 'SevenNet(2024.11.07)' = sevenn 0.10.1 release date; its default 7net-0 is SevenNet_0__11July2024",
           "frozen_group": "A",
@@ -376,17 +378,20 @@
           "architecture_family": "SevenNet/NequIP-type (lmax 3, 5 layers, cutoff 6 A, ~15.8M parameters)",
           "pretraining_dataset": "OMat24 only",
           "upstream": "https://github.com/MDIL-SNU/SevenNet",
-          "release_revision": "release asset v0.11.0.cp (keyword 7net-omat)",
+          "release_revision": "release asset v0.11.0.cp (keyword 7net-omat); sevenn 0.11.0 (released 2025-03-17), the first release that registers 7net-omat",
           "checkpoint_id": "checkpoint_sevennet_omat.pth",
           "checkpoint_url": "https://github.com/MDIL-SNU/SevenNet/releases/download/v0.11.0.cp/checkpoint_sevennet_omat.pth",
           "weights_sha256": "52d7111451a39e6d66b1f4c85cb7cb240dbda48e7bb7341b834ffa0cd8bdc29a",
           "package_name": "sevenn",
-          "package_version": "0.10.1",
+          "package_version": "0.11.0",
+          "package_version_evidence": "sevenn 0.11.0 CHANGELOG and GitHub release v0.11.0 add 7net-omat (PR #184); sevenn/_const.py in the 0.11.0 sdist maps SEVENNET_omat to v0.11.0.cp/checkpoint_sevennet_omat.pth; no 0.10.x release references 7net-omat; the checkpoint's embedded config records version '0.11.0' (lmax 3, cutoff 6.0, 5 layers, 89 species, use_modality false, 15,761,718 parameters); 0.11.0 also changes tensor-product instruction order and requires e3nn>=0.5.0, so Group-A SevenNet-0 stays on its benchmark-compatible sevenn 0.10.1; verified 2026-10-23",
           "adapter_name": "sevennet",
           "load_options": {
             "calculator": "sevenn.sevennet_calculator.SevenNetCalculator"
           },
-          "license_identifier": "MIT (SevenNet repository; release asset)",
+          "license_identifier": "GPL-3.0 (GNU GPL v3; historical sevenn 0.11.0 / v0.11.0.cp release, not the current MIT repository license)",
+          "checkpoint_license": "GPL-3.0: release asset of GitHub tag v0.11.0.cp, whose repository LICENSE is GPLv3; the release notes and README declare no separate weights license",
+          "license_evidence": "sevenn 0.11.0 sdist LICENSE (SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986, verbatim GPLv3 text), PyPI classifier 'License :: OSI Approved :: GNU General Public License v3 (GPLv3)'; GitHub tags v0.11.0 and v0.11.0.cp LICENSE are GPLv3; upstream relicensed to MIT in commit 44ab70f94e (2025-06-20), first released in v0.12.0; the separate 251.8 MB figshare 'full-information' checkpoint (article 28593938) is labelled 'GPL 3.0+' and is not the frozen artifact; verified 2026-10-23",
           "element_coverage": "89 chemical species",
           "selection_rationale": "only OMat24-only checkpoint that is open-source licensed and in a Group-A architecture family (SevenNet-0); MACE-OMAT-0 rejected (ASL: non-commercial, not open source; AGENTS.md external-resources policy); FAIR-Chem eqV2/eSEN OMat rejected (custom gated OMat24 License requiring acceptance, needs explicit user approval under AGENTS.md)",
           "limitations": [
@@ -684,7 +689,7 @@
         "required_resolution": "concrete checkpoints, hashes, licences, package versions and reference compatibility for Group A and the B1/B2 selections",
         "resolution": {
           "status": "resolved",
-          "rule": "frozen model registry in protocol.model_groups (Group A = LiTraj benchmark identities; B1 = M3GNet-MatPES-PBE-v2025.1-PES; B2 = SevenNet-omat; C not enabled); each checkpoint SHA-256 is verified before loading; all six passed the e3sse-unit-smoke-v3 test through adapter e3sse-ase-adapter-v1",
+          "rule": "frozen model registry in protocol.model_groups (Group A = LiTraj benchmark identities; B1 = M3GNet-MatPES-PBE-v2025.1-PES; B2 = SevenNet-omat; C not enabled); each checkpoint SHA-256 is verified before loading; each must pass the e3sse-unit-smoke-v3 test through adapter e3sse-ase-adapter-v1 in its pinned environment at the reviewed commit (production reports pending; SevenNet-omat must be re-run under sevenn 0.11.0)",
           "evidence": "Research Design 5.5 Table 7; LiTraj Methods; AGENTS.md external resources. frozen pre-analysis decision 2026-10-19 before any outcome inspection; reviewed by research-architect and statistical-validator"
         }
       },

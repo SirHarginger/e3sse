@@ -78,9 +78,32 @@ def test_frozen_registry_is_complete_and_pins_every_checkpoint():
                 "MIT",
                 "BSD-3-Clause",
                 "BSD-3-Clause-LBNL",
+                "GPL-3.0",
             }
     matgl = [m for g in groups.values() for m in g if m.get("adapter_name") == "matgl"]
     assert all(m["load_options"]["stress_unit"] == "eV/A3" for m in matgl)
+
+
+def test_sevennet_releases_are_pinned_independently_with_historical_licenses():
+    config = json.loads(Path("configs/protocol_freeze.json").read_text(encoding="utf-8"))
+    groups = config["protocol"]["model_groups"]
+    sevennet_0 = next(m for m in groups["A"] if m["canonical_name"] == "SevenNet-0-11July2024")
+    (sevennet_omat,) = groups["B2"]
+    # SevenNet-0 keeps the LiTraj benchmark release; 7net-omat first ships in sevenn 0.11.0.
+    assert (sevennet_0["package_name"], sevennet_0["package_version"]) == ("sevenn", "0.10.1")
+    assert (sevennet_omat["package_name"], sevennet_omat["package_version"]) == ("sevenn", "0.11.0")
+    assert sevennet_0["weights_sha256"] == (
+        "7052cb42b7b3be42b40b97fa0d21077a48c54b5548948fc4dcf346629f813c36"
+    )
+    assert sevennet_omat["weights_sha256"] == (
+        "52d7111451a39e6d66b1f4c85cb7cb240dbda48e7bb7341b834ffa0cd8bdc29a"
+    )
+    assert sevennet_omat["checkpoint_url"].endswith("/v0.11.0.cp/checkpoint_sevennet_omat.pth")
+    # Both frozen releases predate the upstream MIT relicensing (first released in v0.12.0).
+    for model in (sevennet_0, sevennet_omat):
+        assert model["license_identifier"].split()[0] == "GPL-3.0"
+        assert model["checkpoint_license"].startswith("GPL-3.0")
+        assert "v0.12.0" in model["license_evidence"]
 
 
 def test_adapter_verifies_checkpoint_identity_before_any_model_import(tmp_path):
