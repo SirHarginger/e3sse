@@ -339,3 +339,162 @@ unique, deterministically created IDs, never `seed + worker_id`) and NumPy BLAS
 thread control; DGL CPU best practices (OpenMP threads); Linux NUMA memory policy
 (local allocation with distance-ordered fallback); `/proc/meminfo` MemAvailable and
 `/proc/<pid>/status` VmHWM.
+
+## Study 1: Softening Atlas
+
+Study 1 evaluates Eq. 17 (`s = sum F_ML F_DFT / sum F_DFT^2`, so `F_ML ~ s F_DFT`) for
+the six frozen models on published-train MPLiTrj frames.  Every scientific rule is
+read from the frozen protocol, which is pinned in `configs/study1_softening_atlas.json`
+by protocol ID `5f9aa711...`, the `protocol.json` SHA-256 `6b3ed746...` and freeze commit
+`971f4c42...`.  The rules come from `study_1_contract`, `statistical_plan` and the
+partition manifest: leakage rule, support, deciles, bootstrap, label budget, seeds,
+populations and anion families.  A later implementation commit does not change the
+protocol.  Each output records both the protocol identity and the implementation Git
+SHA.
+
+Prerequisites:
+
+- the frozen protocol directory `outputs/protocol_freeze/<protocol_id>/`;
+- the five frozen model runtimes `~/.venvs/<env>` from the production runtime table;
+- the project `.venv` with the `figures` extra: `pip install -e ".[figures]"`, which pins
+  seaborn 0.13.2;
+- a server-local checkpoint map,
+  `/srv/ben/e3sse/outputs/model_checkpoints/checkpoint_map.json`, of the form
+  `{"<canonical_name>": "<path>"}`.  It names the same checkpoint paths that were used
+  for the smoke tests.  Paths are operational.  Each checkpoint is SHA-256-verified
+  against the registry before it is loaded.
+
+Outcome seal.  Inference reads DFT forces and energies, and analysis reads statistics
+derived from them, so both call `contracts.require_outcome_access(role="train")`
+before any label is read.  The call needs `registration_registered.json`, written by
+`scripts/record_registration.py --status registered`, in the frozen protocol
+directory.  Until that file exists, `infer` and `analyze` stop with
+`Study 1 outcomes are sealed`.  `plan`, `index-frames` and `probe` read no label, so
+they may run before registration:
+
+- `index-frames` records byte offsets, atom counts, the header `material_id` and the
+  cell volume, and re-hashes the source file;
+- `probe` evaluates geometry only, read from species, positions and cell columns.
+
+Architecture.  Data flow:
+
+```text
+frozen membership --> frame index (byte offsets, bound to source SHA-256)
+  --> per model, in its own runtime: fixed 512-frame contiguous shards
+      --> spawned workers, one calculator each
+      --> per-frame, per-element sums (sxy, sxx, syy, n_informative)
+      --> frame_statistics.npz
+  --> analysis (project .venv):
+      consolidate (model DFT sums must equal the DFT reference exactly)
+      --> leakage audit per target hop
+          (contracts.audit_softening_frame_eligibility_batch)
+      --> frozen decile cut points and label-budget hop sets
+      --> resumable units (estimates + whole-frame bootstrap, label budget)
+      --> derived tables --> paper tables --> figures
+```
+
+The per-frame sums are sufficient for:
+
+- every scope: global, anion family, material, element, s_Li, s_host and energy decile;
+- the bootstrap, where a frame drawn c times contributes c times its sums;
+- the label budget;
+- the residual fraction `1 - sxy^2 / (sxx syy)`.
+
+Raw force arrays are therefore not stored.
+
+Scopes are independent.  An unsupported estimate stays unsupported, with its reasons,
+and no other scope's estimate replaces it.  Support follows the frozen
+`validate_softening_support` rule for every component set: informative components are
+counted over all atoms of the frames the estimate uses (`n_support_informative_components`).
+The count over the estimate's own Eq. 17 components (one species for an element scale;
+non-Li atoms for s_host) is reported separately as `n_informative_components`.
+Bootstrap indices come from the frozen PCG64DXSM bit stream mapped by unbiased rejection
+sampling (`DRAW_MAPPING`, recorded in the manifest), not from `Generator.integers`; an
+external reproducer must use the same mapping to get identical intervals.  A frame whose model inference failed is never
+dropped.  Analysis refuses to run while any model frame failed, because no registered
+rule says how such a frame enters paired comparisons.  Out-of-memory errors are
+infrastructure failures: the shard is not stored and reruns on resume.
+
+Pooled global, family, element and decile scales are labelled
+`atlas_descriptive_not_for_correction`.  They are audited against a sentinel target
+hop and correct no hop.  Per-hop material scales are leakage-free (`primary`), and
+own-path scales are `oracle_upper_bound`.  s-bar is reported per model and on the
+common hop set estimated for every model; H3 uses the common set.  Intervals are
+whole-frame percentile bootstraps (frozen unit), conditional on the observed paths
+and materials.
+
+Each model runs in its own frozen runtime, `~/.venvs/<env>/bin/python`, launched
+with `PYTHONPATH=src` and the frozen environment variables (e.g. `DGLBACKEND`).  The
+run first checks that Python and the pinned packages match.  Models run one at a
+time, because each pool is sized to the whole memory envelope.  Before production,
+each model passes the frozen pilot gate on 8 published-train frames, chosen by
+SHA-256 rank of frame ID.  The gate requires:
+
+- finite-difference force signs (step 0.01 A, at least 3 informative pairs with
+  |F| >= 0.1 eV/A above float32 energy rounding);
+- a positive parity slope;
+- requested device/dtype equal to effective.
+
+The run also checks every `name==version` line of the frozen environment lock against
+the installed distributions.
+
+Workers and threads:
+
+- `--workers auto` uses the model's probe report: 1.5x the measured VmHWM against
+  MemAvailable minus the 2 GiB reserve.  The probe runs at 8 threads by default (the
+  thread cap), on the largest frames by atoms, atoms^2/V and atoms^3/V^2;
+- `--threads-per-worker auto` = floor(usable CPUs / memory-limited workers), capped at
+  `--max-threads-per-worker` (default 8);
+- the thread count is stored in `execution_settings.json` on first start and reused on
+  every resume, because thread settings enter shard fingerprints.
+
+Outputs on tmpfs are refused.  Inference reuse is governed by the content hashes of the computing code plus the
+protocol, source, frame index, checkpoint and environment-lock identities.  Worker
+count, host and Git SHA are recorded but are not part of that identity.
+
+Server sequence (run as the project user, clean worktree at the reviewed commit):
+
+```bash
+cd /srv/ben/e3sse
+export PYTHONPATH=src TMPDIR=/srv/ben/e3sse/scratch
+.venv/bin/python scripts/run_study1_softening_atlas.py plan
+.venv/bin/python scripts/run_study1_softening_atlas.py index-frames --resume
+.venv/bin/python scripts/run_study1_softening_atlas.py probe --all-models
+.venv/bin/python scripts/run_study1_softening_atlas.py infer --all-models --resume  # after registration
+.venv/bin/python scripts/analyze_study1_softening_atlas.py --resume
+.venv/bin/python scripts/plot_study1_figures.py
+.venv/bin/python scripts/run_study1_softening_atlas.py verify --rehash-source
+```
+
+Resume.  After an interruption, rerun the same command with `--resume`:
+
+- verified shards are reused;
+- missing shards run;
+- stale or corrupt checkpoints stop the run;
+- nothing is deleted.
+
+Outputs, under `outputs/study1_softening_atlas/<protocol_id[:16]>/`:
+
+- `frame_index/<source_sha[:16]>/{frame_offsets.npz,manifest.json}`
+- `resources/probe_structures/`, `resources/worker_memory/<model>/` (operational)
+- `inference/{dft_reference,<model>}/`: `frame_statistics.npz`,
+  `frame_statistics_manifest.json` (records the `pilot_gate` SHA-256 binding),
+  `pilot_gate/<key16>.json`, `pilot_gate_binding.json` (published once; every resume and
+  the analysis re-hash the report and fail on mismatch), `execution_settings.json`,
+  `study1_runs/*.json` (provenance and compute cost), `shards/`, `execution_manifests/`
+- `analysis/<fingerprint[:16]>/`:
+  - `frozen/`: eligibility units, `study1_energy_deciles.json`, label-budget hop sets,
+    `study1_common_hop_population.json` (paired/H3 hop set, fixed before estimation;
+    its canonical SHA-256 is in the analysis manifest);
+  - `analysis_inputs/*.npy`;
+  - `units/`;
+  - `derived/`: `study1_softening_estimates.csv`, `study1_model_summary.csv`,
+    label-budget hops/stability/repeats, `study1_pretraining_coverage.json`, inclusion
+    accounting, compute cost;
+  - `tables/table_study1_*.csv`;
+  - `figures/study1_{softening_atlas,label_budget_stability}.{pdf,png,figure.json}`;
+  - `study1_analysis_manifest.json`, which holds the SHA-256 of every output.
+
+The label-budget figure shows estimator stability only.  Barrier error versus K
+belongs to Study 2.  H3 is reported descriptively, with architecture/dataset
+confounding.

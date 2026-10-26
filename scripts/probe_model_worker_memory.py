@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Measure one frozen model's per-worker peak memory for execution planning.
 
-Operational measurement only: a synthetic Li2O supercell, no LiTraj data, no
+Operational measurement only: a synthetic Li2O supercell (``--min-atoms``) or
+explicit geometry-only structures (``--structure-file``, e.g. the largest real frames
+chosen from structure by ``run_study1_softening_atlas.py probe``); no label, no
 outcome, and no scientific result.  Run it in the model's pinned environment.  The
 JSON report is written atomically to
 ``<output>/<canonical_name>/<fingerprint-prefix>.json``; ``--resume`` reuses it only
@@ -12,6 +14,7 @@ the report to production runners as ``--worker-memory-report`` for ``--workers a
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import subprocess
@@ -46,8 +49,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--model", required=True, help="canonical_name in the registry")
     parser.add_argument("--checkpoint", required=True, type=Path)
-    parser.add_argument("--min-atoms", required=True, type=int,
-                        help="largest production frame size, from the frozen input manifest")
+    size = parser.add_mutually_exclusive_group(required=True)
+    size.add_argument("--min-atoms", type=int,
+                      help="largest production frame size, from the frozen input manifest")
+    size.add_argument("--structure-file", type=Path,
+                      help="JSON {structures: [{numbers, positions, cell, pbc}]}, geometry only")
     parser.add_argument("--threads-per-worker", type=int, default=1)
     parser.add_argument("--evaluations", type=int, default=3)
     parser.add_argument("--output", required=True, type=Path)
@@ -61,12 +67,18 @@ def main(argv: list[str] | None = None) -> int:
     package_version = importlib.metadata.version(model["package_name"])
     if package_version != model["package_version"]:
         raise SystemExit("installed package version differs from the frozen registry")
+    structures, structure_sha = None, None
+    if args.structure_file is not None:
+        raw = args.structure_file.read_bytes()
+        structures = json.loads(raw)["structures"]
+        structure_sha = hashlib.sha256(raw).hexdigest()
     identity = probe_identity(
         model,
         min_atoms=args.min_atoms,
         threads_per_worker=args.threads_per_worker,
         evaluations=args.evaluations,
         package_version=package_version,
+        structure_file_sha256=structure_sha,
     )
     fingerprint = canonical_sha256(identity)
     output = ensure_safe_output_dir(args.output, args.protected_root)
@@ -90,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         min_atoms=args.min_atoms,
         threads_per_worker=args.threads_per_worker,
         evaluations=args.evaluations,
+        structures=structures,
     )
     report = {
         "schema_version": WORKER_MEMORY_REPORT_SCHEMA,

@@ -24,3 +24,11 @@ transport validation
 conformal / FDR selection
   ↓
 prospective screening
+```
+
+## Study 1 (Softening Atlas)
+
+Production commands, outcome-seal requirements and outputs are in
+`docs/workflow.md` ("Study 1: Softening Atlas").  Entry points:
+`scripts/run_study1_softening_atlas.py`, `scripts/analyze_study1_softening_atlas.py`,
+`scripts/plot_study1_figures.py`.

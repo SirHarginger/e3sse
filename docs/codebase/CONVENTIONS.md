@@ -38,12 +38,13 @@
 
 ### 6) Publication Figure Conventions
 
-Not yet implemented; applies to future manuscript figures.
+Implemented for Study 1 in `src/e3sse/softening/study1_figures.py` (`pip install -e ".[figures]"`).
 
 - Seaborn for statistical/data visualization.
 - Matplotlib object-oriented `Figure`/`Axes` API for layout, axes, ticks, annotations, legends, and export (no `pyplot` state machine for composition).
 - Plot scripts carry semantic names tied to the scientific content (e.g. `plot_softening_scale_by_family.py`), never `fig1.py`.
 - Vector PDF is the canonical manuscript output; high-resolution raster exports only where needed.
+- Figures read only saved derived tables and write a JSON manifest with input-table SHA-256.
 
 ### 7) Evidence
 

@@ -7,7 +7,7 @@ import json
 import math
 import re
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -1145,11 +1145,115 @@ def audit_softening_frame_eligibility(
         raise ValueError("target_hop_id must be a non-empty identifier")
     if estimator_scope not in {"global", "family", "material", "element"}:
         raise ValueError("invalid softening estimator scope")
-    membership_sha256 = _verify_membership(protocol, partition_records)
-    frozen_frames = {
-        str(row["frame_id"]): row for row in partition_records if row.get("frame_id") is not None
-    }
-    role_of, assignment_sha256 = _partition_roles(protocol, partition)
+    frozen = _FrozenMembership(protocol, partition_records, partition)
+    return frozen.audit(
+        records,
+        target_hop_id=target_hop_id,
+        estimator_scope=estimator_scope,
+        scope_evidence=scope_evidence,
+        allowed_partition_role=allowed_partition_role,
+        target_material_id=target_material_id,
+        target_family=target_family,
+        target_element=target_element,
+        estimator_kind=estimator_kind,
+    )
+
+
+def audit_softening_frame_eligibility_batch(
+    requests: Iterable[Mapping[str, Any]],
+    *,
+    protocol: Mapping[str, Any],
+    partition_records: Sequence[Mapping[str, Any]],
+    partition: str | int,
+) -> Iterator[dict[str, Any]]:
+    """:func:`audit_softening_frame_eligibility` for many targets, one membership check.
+
+    Each request holds that function's per-target keyword arguments (``records``,
+    ``target_hop_id``, ``estimator_scope``, ...).  Every selection is produced by the
+    same code path and is identical to a single call with the same arguments; only
+    the frozen-membership digest verification and frame lookup are shared.
+    """
+
+    frozen = _FrozenMembership(protocol, partition_records, partition)
+    for request in requests:
+        request = dict(request)
+        records = request.pop("records")
+        if not _nonempty_string(request.get("target_hop_id")):
+            raise ValueError("target_hop_id must be a non-empty identifier")
+        if request.get("estimator_scope") not in {"global", "family", "material", "element"}:
+            raise ValueError("invalid softening estimator scope")
+        yield frozen.audit(records, **request)
+
+
+class _FrozenMembership:
+    """Verified frozen membership and partition roles shared by eligibility audits."""
+
+    def __init__(
+        self,
+        protocol: Mapping[str, Any],
+        partition_records: Sequence[Mapping[str, Any]],
+        partition: str | int,
+    ) -> None:
+        self.protocol = protocol
+        self.partition = partition
+        self.membership_sha256 = _verify_membership(protocol, partition_records)
+        self.frozen_frames = {
+            str(row["frame_id"]): row
+            for row in partition_records
+            if row.get("frame_id") is not None
+        }
+        self.role_of, self.assignment_sha256 = _partition_roles(protocol, partition)
+
+    def audit(
+        self,
+        records: Iterable[Mapping[str, Any]],
+        *,
+        target_hop_id: str,
+        estimator_scope: str,
+        scope_evidence: Mapping[str, Any],
+        allowed_partition_role: str,
+        target_material_id: str | None = None,
+        target_family: str | None = None,
+        target_element: str | None = None,
+        estimator_kind: str = "primary",
+    ) -> dict[str, Any]:
+        return _audit_selection(
+            records,
+            frozen_frames=self.frozen_frames,
+            role_of=self.role_of,
+            membership_sha256=self.membership_sha256,
+            assignment_sha256=self.assignment_sha256,
+            protocol=self.protocol,
+            partition=self.partition,
+            target_hop_id=target_hop_id,
+            estimator_scope=estimator_scope,
+            scope_evidence=scope_evidence,
+            allowed_partition_role=allowed_partition_role,
+            target_material_id=target_material_id,
+            target_family=target_family,
+            target_element=target_element,
+            estimator_kind=estimator_kind,
+        )
+
+
+def _audit_selection(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    frozen_frames: Mapping[str, Mapping[str, Any]],
+    role_of: Any,
+    membership_sha256: str,
+    assignment_sha256: str,
+    protocol: Mapping[str, Any],
+    partition: str | int,
+    target_hop_id: str,
+    estimator_scope: str,
+    scope_evidence: Mapping[str, Any],
+    allowed_partition_role: str,
+    target_material_id: str | None,
+    target_family: str | None,
+    target_element: str | None,
+    estimator_kind: str,
+) -> dict[str, Any]:
     if estimator_kind not in {"primary", "oracle"}:
         raise ValueError("estimator_kind must be primary or oracle")
     if estimator_scope == "material":

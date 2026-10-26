@@ -1,0 +1,22 @@
+{
+  "schema_version": "e3sse.study1.config.v1",
+  "frozen_protocol": {
+    "protocol_id": "5f9aa7117dbc08f41b3409d9149305b83f5e4053402ca97c916bc68856acdf07",
+    "protocol_json_sha256": "6b3ed7465806d2bfc99847c4e2abc1dd0fa61fd1bc5348a2ef6939a35c5b7b07",
+    "freeze_git_sha": "971f4c4243463d9e78eebe4686e44334892527af",
+    "directory": "/srv/ben/e3sse/outputs/protocol_freeze/5f9aa7117dbc08f41b3409d9149305b83f5e4053402ca97c916bc68856acdf07"
+  },
+  "server_config": "server.json",
+  "output_root": "/srv/ben/e3sse/outputs/study1_softening_atlas",
+  "model_runtime_root": "~/.venvs",
+  "checkpoint_map": "/srv/ben/e3sse/outputs/model_checkpoints/checkpoint_map.json",
+  "inference": {
+    "classification": "engineering_choice: fixed so shard identities never depend on worker count",
+    "source_file": "MPLiTrj_train.xyz",
+    "frames_per_shard": 512,
+    "device": "cpu",
+    "pilot_gate_frames": 8,
+    "pilot_gate_fd_step_angstrom": 0.01
+  },
+  "note": "Scientific constants (Eq. 17, support, deciles, bootstrap, label budget, seeds, populations, families) are read from the frozen protocol.json, never from this file."
+}
