@@ -676,7 +676,7 @@ def run_identity(
         "environment_lock_sha256": environment_lock_sha256,
         "device": device,
         "requested_dtype": None if model is None else requested_dtype(model),
-        "outcome_rule": "published_train_only_seal_1_registration_required",
+        "outcome_rule": "published_train_only_seal_1_frozen_governance",
     }
 
 

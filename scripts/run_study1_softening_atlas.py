@@ -77,6 +77,7 @@ class Context:
         ).expanduser()
         self.protocol = inputs.load_frozen_protocol(self.config, directory=self.protocol_dir)
         self.protocol_sha256 = self.config["frozen_protocol"]["protocol_json_sha256"]
+        self.internal_freeze = inputs.internal_freeze_binding(self.config, self.protocol)
         server = inputs.load_json(inputs.resolve(base, self.config["server_config"]))
         self.data_root = Path(server["paths"]["data_root"]).resolve()
         self.protected = [self.data_root]
@@ -129,9 +130,14 @@ class Context:
 def _seal(ctx: Context, frame_ids: list[str]) -> tuple[bool, str]:
     addendum = inputs.registration_addendum(ctx.protocol_dir)
     try:
-        inputs.require_study1_outcome_access(ctx.protocol, addendum, ctx.records, frame_ids)
+        inputs.require_study1_outcome_access(ctx.protocol, addendum, ctx.records, frame_ids,
+                                             internal_freeze_protocol=ctx.internal_freeze)
     except inputs.Study1InputError as exc:
         return False, str(exc)
+    if ctx.internal_freeze is not None:
+        return True, ("seal 1 satisfied: internal-freeze protocol "
+                      f"{ctx.internal_freeze['protocol_id'][:16]} (pre-specified, not "
+                      "pre-registered); published-train units verified")
     return True, "seal 1 satisfied: frozen protocol registered; published-train units verified"
 
 

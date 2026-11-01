@@ -31,6 +31,9 @@ else
     echo "==> No runnable pytest suite yet; skipping"
 fi
 
+echo "==> Semantic naming check (no new numeric version labels)"
+python .agents/scripts/check_semantic_names.py
+
 echo "==> Git data-safety check"
 
 if git ls-files | grep -E '^(data|outputs|logs|scratch)/' >/dev/null 2>&1; then

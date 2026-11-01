@@ -1,0 +1,953 @@
+{
+  "schema_version": "e3sse.internal-freeze-protocol.config",
+  "protocol_name": "E3-SSE reliability-gated internal-freeze protocol",
+  "parent_protocol": {
+    "protocol_id": "5f9aa7117dbc08f41b3409d9149305b83f5e4053402ca97c916bc68856acdf07",
+    "directory": "/srv/ben/e3sse/outputs/protocol_freeze/5f9aa7117dbc08f41b3409d9149305b83f5e4053402ca97c916bc68856acdf07",
+    "protocol_sha256": "6b3ed7465806d2bfc99847c4e2abc1dd0fa61fd1bc5348a2ef6939a35c5b7b07",
+    "protocol_name": "E3-SSE registration-gated historical protocol"
+  },
+  "output_root": "/srv/ben/e3sse/outputs/protocol_freeze",
+  "governance": {
+    "governance_mode": "internal_version_controlled_freeze",
+    "external_registration_required": false,
+    "preregistration_claimed": false,
+    "freeze_mechanism": "content-addressed revision_id materialized from a reviewed, clean Git commit; every decision is fixed before any internal-freeze-governed outcome is read",
+    "supersedes": "the OSF-registration parts of parent decision two_stage_outcome_seal for internal-freeze-governed analyses only; the parent protocol and its registration semantics are unchanged",
+    "deviation_statement": "Research Design Abstract status line and sections 4, 5.1, 7 and 8, and parent decisions two_stage_outcome_seal and preregistered_hypotheses, planned OSF pre-registration. internal-freeze protocol replaces external registration with an internal, version-controlled freeze; internal-freeze protocol analyses must not be described as pre-registered (use 'pre-specified'). The retained part of two_stage_outcome_seal still applies: training-only pilot thresholds are fixed and bound to this revision before any test outcome is unsealed.",
+    "provenance_field": "every internal-freeze-governed outcome read records governance = 'internal_freeze:<revision_id>' alongside purpose",
+    "optional_external_timestamp": "a signed Git tag of the freeze commit may be pushed as an outside timestamp; it is not called pre-registration"
+  },
+  "outcome_access_declaration": {
+    "statement": "no DFT outcome (MPLiTrj label, nebDFT2k barrier, FPMD reference) was read under the parent protocol before this revision was frozen",
+    "declared_by": "project owner",
+    "declared_on": "2026-11-01",
+    "verifiable_by": "the builder scans Study-1 inference outcome_access/ and study1_runs/ records only; barrier, pilot and FPMD reads are excluded by the code-level seals, not by this scan"
+  },
+  "public_stage_names": {
+    "study_1": "CALIBRATION + APPLICABILITY",
+    "study_2a": "UNSEEN-KINETICS TRANSFER",
+    "study_4": "RISK-CONTROLLED SELECTION",
+    "study_5": "PROSPECTIVE DISCOVERY"
+  },
+  "amendments": {
+    "transfer_benchmark": {
+      "classification": "task_specified; B3/B5/B6 paper_specified (Research Design 5.7)",
+      "analysis": "inherits parent study_2a_contract: fixed-geometry single points on DFT-NEB images, no ML-NEB",
+      "methods": {
+        "B0_raw": {
+          "predictor": "max_ML_image_energy_minus_min_ML_image_energy",
+          "dft_force_labels": "none",
+          "barrier_labels": "none",
+          "role": "baseline"
+        },
+        "B1_srt_global": {
+          "predictor": "B0 / s_global",
+          "dft_force_labels": "pooled training-side MPLiTrj frames (parent leakage_rules.scope_partition_rule)",
+          "barrier_labels": "none",
+          "role": "deployable"
+        },
+        "B2_srt_family": {
+          "predictor": "B0 / s_family(target anion family)",
+          "dft_force_labels": "as B1 restricted to the family",
+          "barrier_labels": "none",
+          "role": "deployable"
+        },
+        "B3_srt_material": {
+          "predictor": "B0 / s_material(target hop)",
+          "dft_force_labels": "leakage-eligible frames of the target material; test side non-path only",
+          "barrier_labels": "none",
+          "role": "deployable; parent P1"
+        },
+        "B4_srt_gated": {
+          "predictor": "B1/B2/B3 under the deployment_gate; abstention semantics per selective_prediction.framings",
+          "dft_force_labels": "same frames as the underlying s",
+          "barrier_labels": "none",
+          "role": "deployable"
+        },
+        "B5_linear_recalibration": {
+          "predictor": "a*B0 + b",
+          "dft_force_labels": "none",
+          "barrier_labels": "training-partition nebDFT2k barriers (parent pilot-amendment seal)",
+          "role": "supervised_comparator_visually_separated"
+        },
+        "B6_oracle_own_path": {
+          "predictor": "B0 / s_own_path",
+          "dft_force_labels": "target hop's own NEB-path frames",
+          "barrier_labels": "none",
+          "role": "oracle_upper_bound_never_primary"
+        },
+        "B7_published_fine_tuned": {
+          "predictor": "published metrics",
+          "role": "literature_context_only_never_paired"
+        }
+      },
+      "element_resolved_srt": "secondary diagnostic: B0 / s_Li over the B3 frames; support-gated, no fallback",
+      "transition_state_image_rule": "no score, diagnostic or representation may select an image by DFT energy; image choices use ML energy or all interior images",
+      "common_population": "P1 / rho_SRT keeps the parent population (study_2_sample: all eligible hops fixed before outcome analysis, B0 vs B3). Every other comparison is pairwise on its own frozen common hop set with its own SHA-256; B4 is reported as the retained subset against the same hops under B0 and B3, plus coverage; excluded hops are counted",
+      "metrics": "parent study_2a_contract.metrics plus median absolute error, error reduction and relative improvement, all paired"
+    },
+    "applicability": {
+      "classification": "task_specified; definitions engineering_choice pending statistical-validator review",
+      "scope": "every diagnostic is computed from exactly the frames and component set of the s it diagnoses; no target-hop outcome, own-path frame or barrier label enters any diagnostic",
+      "orientation": "larger value = less trustworthy",
+      "diagnostics": {
+        "rho_F": {
+          "definition": "sqrt(1 - Sxy^2 / (Sxx * Syy)) over the component-pooled Eq. 17 sums (= |sin theta| between stacked DFT and ML force vectors; rho_F^2 equals the Study-1 residual_fraction)",
+          "undefined": "Sxx <= 0 or Syy <= 0 -> undefined, recorded with its reason, never imputed",
+          "denominator_note": "the DFT-denominator variant equals tan(theta), monotone in rho_F, so rankings and AURC are identical",
+          "uncertainty": "whole-frame percentile bootstrap with the same draws as s",
+          "sensitivity": "frame-median of per-frame |sin theta_f|; reported with the informative-component count and mean |F_DFT| because DFT force noise inflates rho_F on low-force frames",
+          "sign_rule": "undefined when Sxy <= 0 (sin theta ignores the sign; anti-aligned forces are not uniform softening)",
+          "sensitivity_informative_components": "rho_F over components with |F_DFT| >= 0.1 eV/A only; requires informative-component sums recorded at inference (transfer runner); not computable from Study-1 sums",
+          "interval_use": "percentile CI is biased near 0 and is descriptive only",
+          "canonical_storage": "stored quantity is residual_fraction (= sin^2 theta, Study-1 sufficient statistics); rho_F = sqrt(residual_fraction) is a derived display value with identical rankings and AURC",
+          "naming_note": "rho_F denotes |sin theta| of the stacked force vectors, not a correlation and not rho_SRT; reports define it at first use (statistical-validator m2)"
+        },
+        "scale_uncertainty": {
+          "definition": "(q97.5 - q2.5) / (2 * s_hat) of the whole-frame bootstrap",
+          "also_reported": "bootstrap SD"
+        },
+        "li_host_disagreement": {
+          "definition": "|ln(s_Li / s_host)| over the same frames",
+          "undefined": "either component set fails the frozen support rule",
+          "expected_definedness": "often undefined on endpoint-relaxation frames (near-zero Li forces); n_undefined reported"
+        },
+        "energy_dependence": {
+          "definition": "|ln(s_high / s_low)| after a median split of the calibration frames on the parent configurational-energy reference dE_f (eV/atom); the median frame goes to the low half",
+          "undefined": "either half fails the frozen support rule",
+          "minimum_frames": "defined only when each half meets the frozen support rule (in practice >= 20 frames)",
+          "test_material_energy_reference": "for test-side materials R(m, N) is built from that material's leakage-eligible non-path frames only",
+          "known_bias": "the low-energy half is low-force, so DFT-noise attenuation biases s_low; reported as a limitation"
+        },
+        "latent_support": {
+          "definition": "see amendments.representation"
+        },
+        "combined": {
+          "definition": "equal-weight mean of within-population percentile ranks of the defined retrospective force diagnostics",
+          "role": "exploratory descriptive comparator in retrospective risk-coverage only; never part of any gate, predictor or endpoint",
+          "learned_weights": false
+        }
+      },
+      "undefined_score_policy": "a hop whose score is undefined is ordered after every defined score (abstained first) and counted",
+      "anion_family_handling": {
+        "classifier": "parent dominant-anion-count-v1: family element sets oxide{O}, sulfide{S}, halide{F,Cl,Br,I}, nitride{N}; atom counts from composition; strictly largest family wins; no family element -> other; tie between the two largest -> other",
+        "computable_from": "composition only; never from outcomes or prospective results",
+        "unsupported_family_scale": "family SRT unavailable for that unit (frozen support rule: >= 10 frames, >= 100 informative components, >= 3 materials); the hybrid predictor then returns the raw prediction labelled 'raw: family scale unavailable', counted separately from applicability abstention; never relabelled as family SRT",
+        "absent_family": "a prospective family with no supported calibration-side scale is handled as unsupported_family_scale"
+      }
+    },
+    "selective_prediction": {
+      "classification": "task_specified; framing is the project owner's decision of 2026-11-01",
+      "framings": {
+        "selective_primary": "abstained hops receive no SRT prediction; risk is computed on retained hops",
+        "correct_or_raw_secondary": "abstained hops keep the raw B0 prediction; coverage = fraction of all hops corrected; risk over all hops; a hop without an SRT prediction (unsupported s) is never corrected, has an undefined score and is counted as uncorrectable, so the curve ends at n_correctable/n; no SRT error is imputed; labelled as distinct from the no-fallback scale rule"
+      },
+      "risk": "absolute barrier error in eV",
+      "ordering": "ascending score (most trustworthy first)",
+      "aurc": "(1/n) * sum_{k=1..n} risk(k), risk(k) = mean error of the first k hops; tied scores contribute their expected risk under uniformly random within-tie order",
+      "random_baseline": "analytic: expected risk(k) = full-coverage mean error, so AURC_random = full-coverage MAE; a Monte Carlo band is drawn for figures only",
+      "oracle": "ordering by the realised error; diagnostic upper bound only",
+      "summaries": [
+        "AURC",
+        "E-AURC = AURC - AURC_oracle",
+        "normalized_gain = (AURC_random - AURC) / (AURC_random - AURC_oracle)",
+        "risk at coverage 0.8"
+      ],
+      "uncertainty": "paired chemical-system cluster bootstrap with the parent frozen resample count and seed derivation",
+      "scores_compared": [
+        "rho_F",
+        "scale_uncertainty",
+        "li_host_disagreement",
+        "energy_dependence",
+        "latent_support",
+        "combined",
+        "random",
+        "oracle"
+      ],
+      "association": "Spearman between each score and correction benefit |raw error| - |SRT error|, with cluster-bootstrap CI",
+      "undefined_scores": "AURC is reported both with undefined scores ordered last and on the defined subset, with n_undefined",
+      "normalized_gain_use": "descriptive only; never tested",
+      "random_baseline_label": "random abstention baseline"
+    },
+    "deployment_gate": {
+      "classification": "project owner's decision of 2026-11-01: label-free quantile threshold",
+      "rule": "apply SRT iff the frozen support rule holds and rho_F <= q_rho and scale_uncertainty <= q_ci",
+      "quantile_level": 0.8,
+      "threshold_population": {
+        "study_2a": "regime-matched: for each Study-1 published-train target hop (primary population), s and its diagnostics recomputed from that material's non-path endpoint frames under the s_scope rule; supported hops only; force data only",
+        "study_4": "per repeat, the diagnostics of all calibration and test units of that repeat, symmetric and Y-free (preserves calibration/test exchangeability)",
+        "study_5": "development-set diagnostics (disjoint from conformal calibration units), Y-free"
+      },
+      "barrier_labels_used": false,
+      "quantile_rule": "numpy.quantile(method='linear')",
+      "latent_support_in_gate": false,
+      "s_scope": "material scope with one frame rule for every unit: leakage-eligible non-path (endpoint-relaxation) frames of the target material; own path forbidden; this is the parent test-side rule applied identically to threshold, calibration and evaluation units",
+      "gated_global_family": "gated B1/B2 diagnostics describe one pooled s per scope, so the gate is a scope-level switch; reported as such, never as a per-hop gate",
+      "reporting": "realised coverage of the gate on every evaluated population; threshold accounting (n used, unsupported, undefined)",
+      "threshold_access": "Study 2a: published-train non-path endpoint frames via require_outcome_access(purpose='threshold_selection'); Study 4: per-repeat symmetric thresholds are part of the pre-specified analysis under seal 2 (not a tuning purpose); Study 5: thresholds are computed from label-free representation or descriptor covariates and need no outcome access",
+      "threshold_scale": "thresholds are computed on the rho_F (= sqrt(residual_fraction)) scale; quantiles are not invariant under sqrt",
+      "threshold_weighting_unit": "one diagnostic value per material (not per hop), so materials with many hops are not over-weighted"
+    },
+    "endpoints": {
+      "classification": "engineering_choice pending statistical-validator review",
+      "P1": "unchanged from parent",
+      "P4": "per Group-A model m with s-bar <= 0.9: Delta-AURC_m = AURC(rho_F) - AURC_random for B3-gated material scope under selective_primary; one-sided bootstrap p_m = fraction of chemical-system cluster-bootstrap replicates with Delta-AURC* >= 0; reported as an approximate percentile-bootstrap p-value (CI inversion), not an exact test",
+      "multiplicity": "parent holm_family unchanged; P4_m is a key-secondary family with Holm across eligible models at one-sided alpha = 0.05; family-wise error is controlled within each family only, stated in every report",
+      "P3": "unchanged validity endpoint, not a superiority hypothesis",
+      "H6": {
+        "added_in": "internal-freeze protocol",
+        "hypothesis": "pre-outcome force non-collinearity rho_F identifies hops where SRT is less accurate",
+        "estimand": "Delta-AURC_m (P4)",
+        "support": "Holm-adjusted one-sided p_m < 0.05 for at least one eligible model",
+        "refute": "Delta-AURC_m >= 0 point estimate for every eligible model",
+        "label_free_baseline": "ranking by |raw barrier| (absolute errors grow with barrier size); rho_F must also be compared with it, descriptively",
+        "inconclusive_zone": "neither support nor refute: reported as inconclusive; any rho_F advantage beyond the |raw barrier| baseline is descriptive only"
+      },
+      "primary_family": "Holm across {P1_m : Group-A model m with s-bar <= 0.9} only (P2 removed from the active family with Study 3); P1_m p-value as in parent holm_family (one-sided chemical-system cluster-bootstrap p for rho_SRT <= 0)"
+    },
+    "label_budget_downstream": {
+      "classification": "paper_specified (Research Design 3.6 'propagated to barrier error', 4 RQ4)",
+      "k": [
+        1,
+        3,
+        5,
+        10,
+        30
+      ],
+      "repeats_and_seeds": "parent label_budget_stability (R, seed key without model_id, common random numbers across models)",
+      "population": "Study-2a evaluation hops whose material-scope eligible frames meet the parent label-budget population rule (N >= 60); frozen as a hop-set manifest before any barrier is read",
+      "outputs": [
+        "|s_K - s_full|",
+        "SRT barrier absolute error with s_K per draw",
+        "fraction of draws with a defined s_K"
+      ],
+      "minimum_hops": "20 qualifying hops; below that the downstream curve is descriptive only",
+      "nonpositive_s_K": "a zero Eq. 17 denominator is an error (parent rule), recorded and reported; s_K <= 0 is reported as undefined for SRT, never imputed",
+      "aggregation": "per hop: mean over draws of the absolute SRT error, then mean over hops; medians also reported because 1/s_K is heavy-tailed at small K",
+      "uncertainty_nesting": "Monte Carlo draws nested inside the chemical-system cluster bootstrap",
+      "stability_estimand": "RQ4 stability keeps the parent finite-population-corrected SD of s_K; |s_K - s_full| is an additional descriptive output",
+      "comparability_note": "test-side K frames are endpoint (low-energy) frames; results are not comparable to Deng et al.'s single high-energy structure"
+    },
+    "representation": {
+      "classification": "task_specified; extraction details pending mlip-specialist verification",
+      "unit": "atom-level invariant node features of the migrating Li",
+      "migrating_li": "the Li atom with the largest minimum-image displacement between the first and last DFT-NEB image (geometry only)",
+      "target_pooling": "mean over interior images; sensitivity: the ML-highest-energy image",
+      "calibration_population": "the development reference population (amendments.prospective.support_gate.support_population_C); frame-level calibration features are not used for support",
+      "normalization": "per-model z-score fitted on the development population only (never on conformal-calibration features)",
+      "support_metric": "mean Euclidean distance to the k=5 nearest development-reference units in the z-scored original space (no further normalization); the same metric defines tau_d",
+      "sensitivity_metric": "Gaussian KDE log-density (Schultz et al., npj Comput. Mater. 2025)",
+      "cross_model": "never compare distances across architectures; per-model small multiples",
+      "projections": {
+        "primary_2d": "PCA fitted on training-side calibration features",
+        "optional_2d": "UMAP with fixed random_state, n_neighbors and min_dist recorded",
+        "presentation_3d": "PCA top three components, interactive HTML",
+        "quantitative_use": "forbidden"
+      },
+      "geometry_source": "the frozen model's own converged ML-NEB relaxed band, identically for development, conformal-calibration and prospective units (owner decision 2026-11-01); migrating Li identified from the BVSE initial-path endpoints",
+      "path_representation": {
+        "rule": "one deterministic path-level vector per hop: per-image migrating-Li embeddings along the converged ML-NEB band, aggregated by a frozen operation; support measured in the original high-dimensional space",
+        "candidate_form": "z_path = [z_initial, z_saddle, z_final, mean_i z_i, std_i z_i] (saddle = ML-highest-energy image); optional compact host summary only if the model already supports it",
+        "status": "mapping rule and acceptance criteria pre-specified; per-model capture selection and acceptance results are server evidence",
+        "mapping_rule": "orientation: images ordered so the endpoint with lower ML energy comes first (ties: BVSE order kept); saddle: interior image with the highest ML energy (ties: lowest index after orientation); z_path = [z(initial), z(saddle), z(final), mean_interior z, std_interior z] of the migrating-Li row, interior = images strictly between the endpoints; for a structure-level-only representation the same blocks use the structure vector; z-scoring on the development population; a channel with zero development variance keeps sd = 1 and is reported",
+        "acceptance_criteria": [
+          "every band image passes the probe checks (finite, invariant, permutation-consistent, deterministic) for the selected capture",
+          "the migrating-Li index is preserved from the BVSE path through ML-NEB (atom order unchanged)",
+          "the representation is environment-sensitive (probe check)",
+          "label-free degeneracy check on the development population: coefficient of variation of leave-one-chemical-system-out k-NN distances >= 0.05, and tau_d bootstrap (1000 system resamples) coefficient of variation <= 0.10; otherwise the descriptor fallback applies"
+        ]
+      },
+      "failed_neb": "no converged band -> no path representation -> no prediction; BVSE-path features are never substituted"
+    },
+    "selection": {
+      "classification": "task_specified; extends parent study_4_contract",
+      "added_predictor": "SRT_gated_correct_or_raw: material-scope s under deployment_gate.s_scope for every calibration and test unit, thresholds computed per repeat symmetrically over all calibration and test units (Y-free), correct-or-raw framing",
+      "unchanged": "every parent study_4_contract and statistical_plan Study-4 rule (draws, seeds, alpha, c, MC SE, tie policy, one hop per chemical system)"
+    },
+    "prospective": {
+      "classification": "project owner's decision of 2026-11-01; split assignment and s source pending statistical-validator review",
+      "deployment_predictor": "E_deploy(x) = E_ML-NEB(x) / s_family if the candidate passes the representation-support gate, else E_ML-NEB(x) (raw); one predictor for the full population, applied identically to development, conformal-calibration and BVEL13k units",
+      "design": [
+        "development set: choose and freeze the prospective model",
+        "conformal calibration set: identical ML-NEB pipeline, known DFT barriers",
+        "prospective BVEL13k pool: identical pipeline"
+      ],
+      "development_set": "published-test primary-population hops of the fixed-geometry transfer analysis, excluding chemical systems that span published splits",
+      "model_selection_rule": "score the deployed predictor (ML-NEB under the frozen ML-NEB rule, representation-support gate, family SRT, correct-or-raw) on the development set; lowest MAE, ties by RMSE; requires ML-NEB on development hops; frozen before any conformal-calibration outcome is read; development outcomes read via a dedicated access purpose restricted to the hashed development manifest",
+      "calibration_set": "published-train primary-population nebDFT2k hops; never used to select the model or tune ML-NEB",
+      "s_source": "pooled s from MPLiTrj frames of training-side chemical systems without nebDFT2k hops (parent study4_predictor_calibration_independence pattern)",
+      "validation_split": "remains the sealed reserve",
+      "fixed_geometry_role": "clean physics validation of SRT; not the deployment predictor",
+      "alpha": 0.2,
+      "threshold_eV": 0.5,
+      "literature_check": "only after the shortlist manifest is frozen and hashed",
+      "dependence_unit": "one structure per chemical system and its rate-limiting hop h*_3: the first hop, in ascending (BVSE barrier, canonical hop key) order, whose addition makes the network 3-D percolating (minimax bottleneck, screening.rate_limiting_hop); covariate-only; identical for development, P and Q",
+      "guarantee_wording": "approximate FDR control under stated assumptions (exchangeability after weighting, covariate-only selection, estimated density ratios); not a formal guarantee",
+      "known_limitation": "nebDFT2k retains only converged NEBs, a possible selection on Y given X that weighting cannot correct",
+      "development_set_reuse": "declared: Study 5 model selection reuses Study-2a published-test outcomes, consistent with Research Design 5.10 'best-validated model'",
+      "g1_contingency": "if G1 fails, Research Design 6: selection proceeds with raw ML-NEB scores",
+      "support_gate": {
+        "metric": "d(x, C): mean Euclidean distance to the k=5 nearest neighbours in the original representation space (amendments.representation normalization); never on PCA/UMAP coordinates",
+        "support_population_C": "the development population: per-system rate-limiting development hops (see populations.development)",
+        "threshold": "tau_d = Q_q of leave-one-chemical-system-out k-NN distances over the development population (applicability_support.fit_reference), q = deployment_gate.quantile_level",
+        "rationale": "taking C and tau_d from the conformal calibration set would make the predictor depend asymmetrically on calibration covariates (statistical-validator and research-architect reviews); a disjoint development set keeps the predictor a fixed function of X",
+        "selective_analysis": "unsupported -> abstain",
+        "conformal_predictor": "unsupported -> raw ML-NEB prediction",
+        "fallback_hierarchy": [
+          "IF a stable frozen-model representation is verified in embedding_capability_manifest (documented_api or specialist-pinned module): latent-support metric",
+          "ELSE IF the label-free descriptor set is available for every development, calibration and pool unit: descriptor-space support metric",
+          "ELSE: reliability-gated prospective SRT is unavailable; ungated SRT-family is reported only as a labelled secondary baseline"
+        ],
+        "no_combination": "sources are never mixed or weighted together",
+        "descriptor_space": {
+          "features": [
+            "li_atomic_fraction",
+            "mean_atomic_number",
+            "sd_atomic_number",
+            "volume_per_atom_A3",
+            "li_number_density_per_A3",
+            "hop_length_A",
+            "em_bvse_eV",
+            "family one-hot (oxide, sulfide, halide, nitride, other; dominant-anion-count-v1)"
+          ],
+          "implementation": "e3sse.screening.applicability_support.descriptor_vector",
+          "standardization": "z-score fitted on the development population",
+          "missing": "a unit with any missing feature is unsupported (fail closed) and counted; never imputed",
+          "status": "proposed; the data-engineer must confirm every feature against the G0-audited schemas of nebDFT2k, nebBVSE122k and BVEL13k"
+        },
+        "family_handling": "descriptor space: family one-hot columns are NOT z-scored (fixed weight 1 per family difference); continuous features are z-scored on the development population",
+        "availability": "descriptor availability is decided per unit; a unit with any missing feature is unsupported",
+        "geometry_source": "ML-NEB relaxed band path representation (amendments.representation.path_representation)"
+      },
+      "separate_quantities": "representation support (SRT applicability), density-ratio weights w(X) for weighted conformal selection, and conformal p-values are three distinct quantities, never collapsed; w(X) is estimated without calibration or pool outcomes",
+      "retrospective_vs_prospective_reliability": "force diagnostics (rho_F, CI(s), Li/host, energy) are retrospective reliability evidence and test whether representation support is informative; only the label-free support gate is part of the deployment predictor",
+      "freeze_order": "development information -> freeze model and ML-NEB protocol -> ML-NEB conformal calibration -> BVEL13k; conformal-calibration outcomes never select the model or tune ML-NEB",
+      "s_scope": "family (pooled, from MPLiTrj frames of training-side chemical systems without nebDFT2k hops)",
+      "ml_neb": {
+        "source": "LiTraj notebooks/nebDFT2k_benchmark_MACE_MP_small.ipynb and notebooks/bvse_neb.ipynb at commit c3ca5c2 (read in full, code cells)",
+        "litraj_recovered": {
+          "initial_path": "BVSE-preconditioned trajectory_init images (nebDFT2k <edge_id>_init.xyz); no re-interpolation",
+          "neb": "ase NEB, k=5.0, climb=True from the start, method='improvedtangent', fixed cell",
+          "optimizer": "ase FIRE",
+          "source_endpoint": "FIRE run() with ASE defaults (fmax 0.05, no step limit)",
+          "target_endpoint": "FIRE fmax=0.1, steps=100",
+          "band": "FIRE run(steps=100) with ASE default fmax 0.05",
+          "convergence_check": "max |force component| < 0.1 eV/A over the band and both endpoints",
+          "failure_handling": "non-converged trajectories are not saved and drop out of the metrics silently",
+          "retry": "none",
+          "barrier": "litraj.utils.get_barrier: max - min image energy",
+          "calculator": "mace_mp(model='small', default_dtype='float64')"
+        },
+        "bvse_initialization_for_new_structures": "ions package: Decorator oxidation states, collect_bvse_params(Li, +1), Percolator(upper_bound=8.0 A), mincut_maxdim(tr=0.5), unique_edges, edge.superedge(8.0).interpolate(n_images=5), SaddleFinder.bvse_neb, FIRE fmax=0.1 steps=100",
+        "proposed_frozen_rule": {
+          "initial_path": "BVSE path from the pinned ions pipeline for every unit (calibration and pool), so the predictor is identical; the generated calibration paths are checked against nebDFT2k _init.xyz",
+          "neb": "as LiTraj (k=5.0, climbing image, improvedtangent, fixed cell)",
+          "endpoints": "both endpoints FIRE fmax=0.1, steps=100 (declared deviation: LiTraj relaxes the source endpoint with ASE defaults, an asymmetry)",
+          "band": "FIRE fmax=0.1 (declared deviation: LiTraj uses the ASE default 0.05 inside a 100-step budget), steps=100",
+          "convergence": "LiTraj check: max |force component| < 0.1 eV/A on band and endpoints",
+          "dtype": "per-model table runtime_requirements.dtype is the only source",
+          "barrier": "max - min ML image energy of the relaxed band"
+        },
+        "failure_policy": {
+          "failure": "non-convergence within the step budget, calculator exception, or non-finite energy/force",
+          "retry": "none (no adaptive retries)",
+          "consequence": "no ML-NEB prediction; the unit is not selectable; it stays in every denominator (attempted, converged, failed, reason, by chemistry and model)",
+          "fdr_population": "FDR statements apply to the converged, gated population defined by covariates only (convergence uses no outcome); applied identically to calibration and pool; the statistical-validator must confirm",
+          "geometric_checks": [
+            "site collapse (frozen_numeric_settings.geometry_checks.site_collapse_A)",
+            "minimum interatomic distance (geometry_checks.min_interatomic_distance_A)"
+          ],
+          "infrastructure_vs_model_failures": "infrastructure failures (OOM, node loss) rerun with identical settings; model failures (non-convergence, exceptions, non-finite values, geometric checks) are final",
+          "order": "draw -> run -> drop, never redraw; power is reported over attempted units",
+          "interior_minimum": "flag only (frozen_numeric_settings.interior_below_endpoints_eV)",
+          "timeout": "infrastructure failure, one identical rerun"
+        },
+        "status": "scientific settings specified (LiTraj c3ca5c2 with two declared deviations); runtime reproduction (ions, ASE, FIRE, NEB) server validation pending",
+        "recovered_details_added": {
+          "neb_forces": "neb.get_forces() returns NEB-projected (spring + climbing) forces on interior images",
+          "device": "LiTraj ran on CUDA; E3-SSE runs on CPU",
+          "deviation_justification": "symmetric endpoints at fmax 0.1/100 steps and band fmax 0.1 match LiTraj's own DFT driver scripts/ase_run_vasp.py (L57-70, L87)",
+          "convergence_note": "FIRE stops on the per-atom force norm while the success check uses the component maximum; convergence counts differ from LiTraj's MACE run; a LiTraj-exact sensitivity runs on the development set only"
+        },
+        "runtime_requirements": {
+          "ase": "one pinned ASE version across all model runtimes (ase.neb vs ase.mep moved in 3.23)",
+          "fire_parameters": "maxstep, dt, a and downhill_check frozen explicitly, never ASE defaults",
+          "calculators": "one calculator per image as in LiTraj (matgl may share one Potential across wrappers)",
+          "device_threads": "CPU device and torch thread count fixed and recorded; a small subset is rerun to confirm reproducibility",
+          "dtype": {
+            "MACE-MP-0-small-2023-12-10": "float64",
+            "CHGNet-0.3.0": "float32 native",
+            "M3GNet-MP-2021.2.8-PES": "float32 native",
+            "M3GNet-MatPES-PBE-v2025.1-PES": "float32 native",
+            "SevenNet-0-11July2024": "float32 native",
+            "SevenNet-omat": "float32 native"
+          },
+          "identity": "runtime environment (package versions) is part of model identity; every ML-NEB output is bound to its environment lock"
+        },
+        "bvse_reproduction": {
+          "rule": "pin the ions version; freeze superedge size (8.0 A) and n_images (5); for calibration hops require the regenerated path to match nebDFT2k _init.xyz (same atom count, order, cell; positions within a frozen tolerance)",
+          "mismatch": "exclude and count; report the reproduction rate",
+          "decorator_failures": "oxidation-state decoration failures are a separate initialisation-failure category"
+        },
+        "quantities_kept_distinct": [
+          "fixed-geometry raw B0",
+          "raw ML-NEB barrier",
+          "SRT-corrected ML-NEB barrier"
+        ],
+        "frozen_numeric_settings": {
+          "neb_constructor": {
+            "k": 5.0,
+            "climb": true,
+            "method": "improvedtangent",
+            "parallel": false,
+            "remove_rotation_and_translation": false,
+            "allow_shared_calculator": false,
+            "scale_fmax": 0.0
+          },
+          "fire": {
+            "dt": 0.1,
+            "maxstep": 0.2,
+            "dtmax": 1.0,
+            "Nmin": 5,
+            "finc": 1.1,
+            "fdec": 0.5,
+            "astart": 0.1,
+            "fa": 0.99,
+            "a": 0.1,
+            "downhill_check": false,
+            "rationale": "the ASE FIRE defaults that LiTraj's notebook used implicitly, now written explicitly so no package default defines the protocol"
+          },
+          "steps": {
+            "endpoint_relaxation": 100,
+            "band": 100,
+            "semantics": "maximum optimizer iterations per run() call in the pinned ASE (recorded by the runtime audit)"
+          },
+          "fmax_eV_per_A": {
+            "endpoints": 0.1,
+            "band": 0.1
+          },
+          "convergence": "max |force component| < 0.1 eV/A over the band (NEB-projected forces) and both endpoints",
+          "geometry_checks": {
+            "min_interatomic_distance_A": 0.75,
+            "site_collapse_A": 0.5,
+            "rationale": "no physical interatomic distance in these Li solids is below ~1 A; 0.75 A flags collapse; endpoints whose migrating-Li positions lie within 0.5 A (minimum image) have collapsed onto one site"
+          },
+          "interior_below_endpoints_eV": {
+            "tolerance": 0.05,
+            "handling": "flag only, reported; not a failure (the barrier is max - min by definition)"
+          },
+          "timeout": "step budget only; a wall-clock limit is an infrastructure failure, rerun once with identical settings (cap 1)",
+          "image_count": "5 BVSE images from ions interpolate(n_images=5) unless the reproduction audit shows nebDFT2k _init.xyz differs, which is then recorded as server evidence",
+          "bvse_reproduction_tolerance": {
+            "cell_A": 0.0001,
+            "max_atom_displacement_A": 0.01,
+            "atom_count_and_order": "identical"
+          },
+          "reproducibility_subset": {
+            "size_hops": 20,
+            "selection": "first 20 development hops by SHA rank of hop_id",
+            "tolerance": "identical convergence status and barrier difference <= 1e-4 eV"
+          },
+          "versions": {
+            "ase": "SLOT: server runtime audit (LiTraj's ASE version is unrecoverable)",
+            "ions": "SLOT: server reproduction audit"
+          }
+        },
+        "runtime_audit_artifact": "per runtime: asserted ASE/ions/torch versions, FIRE and NEB settings above, thread count; produced on the server"
+      },
+      "density_ratio": {
+        "features": "the same label-free descriptor set as the descriptor fallback, but a separate quantity from the support score",
+        "model": "probabilistic classifier, pool vs calibration-population covariates; weights w = P(pool|x)/P(cal|x) times the class-size ratio",
+        "diagnostic": "classifier AUC reported; near 0.5 supports unweighted selection as a sensitivity",
+        "status": "proposed; blocking until statistical-validator review",
+        "p_side": "a frozen random held-out slice of calibration-eligible chemical systems, processed by the identical pipeline (replaces development covariates, which follow a different distribution); held-out units are neither calibration nor selection units",
+        "fit_population": "converged units only on both sides, after the frozen draw -> run -> drop order",
+        "assumption": "dQ/dP(X, Y) depends on X only through the frozen descriptors; stated with every Study-5 result",
+        "frozen_elements": "classifier, features, l2, convergence settings and clipping policy are frozen before fitting",
+        "population": "P and Q eligibility per amendments.prospective.populations; slices drawn after Gate 1 and ML-NEB convergence",
+        "estimator": "L2-regularized logistic domain classifier fitted by IRLS (plain numpy, deterministic, no random initialization); unpenalized intercept; features standardized on the fitting sample; frozen l2; non-convergence means no weights (fail closed)",
+        "diagnostics": [
+          "out-of-sample domain AUC (calibration vs pool covariates, no outcomes) and in-sample AUC",
+          "calibration-weight effective sample size",
+          "max weight",
+          "weight quantiles",
+          "overlap fractions",
+          "class balance",
+          "fraction of unselectable test units (w_j/(sum w + w_j) > q)",
+          "IRLS convergence",
+          "l2"
+        ],
+        "clipping": "off in the primary method; clipped weights only as a labelled sensitivity analysis, which changes the theoretical interpretation",
+        "independence_mapping": "Theorem 3.5 requires w_hat measurable with respect to data independent of {(X_i,Y_i)} calibration and {(X_{n+j},c_{n+j})} test units: w_hat is fitted on a frozen SHA-ranked held-out slice of P-eligible chemical systems (never calibration units) and a frozen held-out slice of Q-eligible systems (never selected); both slices are disjoint by chemical system from every calibration and test unit; labels are not used; pending statistical-validator confirmation",
+        "settings": {
+          "l2": 1.0,
+          "max_iter": 100,
+          "tolerance": 1e-10,
+          "overlap_epsilon": 0.01,
+          "holdout_fraction": 0.2,
+          "holdout_rule": "systems ranked by SHA256('e3sse.weight-holdout' NUL protocol_id NUL chemical_system); the lowest 20% of eligible_P and of eligible_Q systems form the weight-fit slices; membership depends on system IDs only"
+        },
+        "claim": "estimated weights give approximate control only (Theorem 3.5); gamma is unobservable and may be unbounded under a misspecified logistic model, so no numerical bound is claimed; the FDR statement covers the non-held-out pool only"
+      },
+      "weighted_conformal": {
+        "procedure": "Weighted Conformalized Selection: published Biometrika 113(1) asaf066 main text canonical; equations read from arXiv:2307.09291v2 (sections 2-3, appendices A-C incl. C.1 proof of Theorem 3.1 and C.4 proof of Theorem 3.5)",
+        "equation_mapping": {
+          "main_p_value": "eq. 5 (strict <, plus w_j); eq. 4 is the randomized marginal p-value and is NOT the WCS p-value",
+          "auxiliary_p_values": "published Biometrika eq. 6: added term w(X_{n+j}) 1{Vhat_{n+j} < Vhat_l} for the focal unit j",
+          "selection": "Algorithm 1 steps 3-8, deterministic pruning eq. 9",
+          "orientation": "low barrier: Y' = -Y, c' = -c, clipped monotone score"
+        },
+        "tie_rules": {
+          "primary": "tie_free_lexicographic: per-unit tie keys = first 8 bytes of SHA256('e3sse.wcs-tie-key', protocol_id, analysis_id, unit_id); lexicographic (score, key); keys fixed before any score is computed, never redrawn",
+          "primary_theory_status": "statistical-validator 2026-11-01: Theorem 3.1 applies to the augmented problem with the key as an independent i.i.d. covariate; FDR <= q holds marginally over the key draw, not conditionally on the realised keys",
+          "sensitivity": "e3sse_conservative_le: equals official ConfSelect weighted_CS with U_j = 1 except that code's eq. 6 weight index; validity by the reviewer's one-line extension of the C.1 argument (not a published theorem); never primary"
+        },
+        "conformance_evidence": {
+          "independent_reference": "tests/wcs_published_reference.py (paper notation); 480 randomized fixtures across continuous, binary, 3-valued, heavy-tie, all-equal, single-null, zero- and all-selection scenarios; exact match under both tie rules",
+          "official_implementation": "ying531/conformal-selection @ feffee179a1c76c10648bc950db024c356c020fd, confselect-python/ConfSelect/confselect.py weighted_CS(rand='dtm') with U fixed to 1: 200/200 tie fixtures equal to the sensitivity rule; 195/200 continuous fixtures equal; all 5 differences come from the official code using test_weights[k] (w_l) instead of w(X_{n+j}) in eq. 6; with that one index changed, 200/200 agree",
+          "official_eq6_discrepancy": "production follows eq. 6 / eq. 33 (w_j); to be confirmed against the published eq. 6"
+        },
+        "estimated_weight_claim": {
+          "known_weights": "Theorem 3.1: finite-sample FDR <= q under i.i.d. P-calibration, i.i.d. Q-test, covariate shift dQ/dP = w(x), mutual independence of {Z_1..Z_n, Z_{n+j}} and the other test tuples",
+          "estimated_weights": "Theorem 3.5: if w_hat is fitted on data independent of all calibration and test units, FDR <= q E[gamma^2 / (1 + q (gamma^2 - 1) / m)], gamma = sup_x max(w_hat/w, w/w_hat); not exact; inflation vanishes only as w_hat becomes consistent",
+          "reporting": "E3-SSE claims at most the Theorem 3.5 bound for estimated weights, stated with the weight diagnostics; never exact finite-sample control"
+        },
+        "simulation_validation": {
+          "families": [
+            "linear-heteroscedastic shift",
+            "unmodelled shift-region predictor bias",
+            "discrete-predictor ties (2, 3 levels)"
+          ],
+          "shift_region_bias_q0.2": {
+            "known": {
+              "fdr": 0.0,
+              "power": 0.0
+            },
+            "estimated": {
+              "fdr": 0.0,
+              "power": 0.0
+            },
+            "unweighted": {
+              "fdr": 0.786,
+              "power": 0.798
+            }
+          },
+          "interpretation": "weighting is necessary for validity under predictor bias in the shifted region; with poor overlap it is valid but powerless (diagnosed by ESS/overlap); no claim that unweighted selection is generally safe"
+        },
+        "implementation": "e3sse.selection.conformal.weighted_conformalized_selection",
+        "status": "implementation complete and reviewed",
+        "official_eq6_discrepancy": "published-paper / reference-code discrepancy: official ConfSelect code (feffee17) uses w_l; E3-SSE follows the published eq. 6 (regression test test_published_eq6_focal_weight_is_w_j_not_the_reference_code_w_l)"
+      },
+      "pool_exclusions": "every structure or chemical system present in development, calibration or any evaluation partition is excluded from the pool",
+      "pruning_note": "deterministic pruning is conservative (fewer rejections than random pruning); reported alongside power",
+      "rate_limiting_hop_algorithm": {
+        "status": "blocking until the data-engineer verifies the BVEL13k/nebBVSE122k/nebDFT2k linkage on the actual data",
+        "must_specify": [
+          "percolating network identification",
+          "rate-limiting quantity",
+          "multiple percolating paths",
+          "ties",
+          "symmetry-equivalent hops",
+          "missing or disconnected networks",
+          "hop direction",
+          "structure identity mapping across BVEL13k, nebBVSE122k and nebDFT2k",
+          "deterministic fallback when the mapping is absent"
+        ],
+        "design_reconsideration": "if the public files cannot reproduce structure -> network -> hops -> BVSE barriers -> rate-limiting hop for both populations, the design is reconsidered rather than the mapping fabricated"
+      },
+      "stage_separation": "Gate 1 (rate-limiting hop) -> ML-NEB -> applicability gate -> SRT/raw hybrid -> weighted conformal selection; distinct operations, never mingled",
+      "failure_vs_abstention": {
+        "ml_neb_failure": "no converged path: no deployable prediction, not selectable, counted as a process failure",
+        "applicability_abstention": "converged path outside support: raw ML-NEB prediction retained in the conformal hybrid; counted as abstained in the selective-prediction analysis",
+        "reporting": "failure and abstention rates by chemistry and anion family"
+      },
+      "guarantee_population": "any prospective FDR statement applies only to candidates for which the frozen ML-NEB predictor returns a valid converged path; no FDR claim over all BVEL13k candidates",
+      "populations": {
+        "denominators": {
+          "gate1_population": "all structures passing Gate 0 with a deterministic rate-limiting hop (one structure per chemical system)",
+          "ml_neb_attempted": "Gate-1 units for which ML-NEB was run under the frozen rule (all of them; draw -> run once)",
+          "ml_neb_converged": "attempted units with a converged band and no failure category",
+          "applicability_supported": "converged units inside the frozen support gate",
+          "conformal_predictor_eligible": "converged units (supported -> family SRT if the family scale is supported; otherwise raw, labelled), i.e. every converged unit receives exactly one frozen prediction",
+          "selected": "units selected by WCS"
+        },
+        "fdr_target_population": "FDR statements apply only to the conformal_predictor_eligible population on which WCS was run; the full attrition funnel (Gate 1 -> attempted -> converged -> supported -> eligible -> selected) is reported separately with explicit counts",
+        "P": "eligible_P(system) = system in the partition universe with nebDFT2k hops AND not in the development set AND passes Gate 0 AND the structure chosen by structure_rule has a 3-D percolating network AND its rate-limiting hop h*_3 is a nebDFT2k hop (else ineligible and counted, never re-chosen) AND the frozen ML-NEB converges on h*_3 AND the regenerated BVSE path reproduces nebDFT2k _init.xyz within frozen tolerance (calibration-only filter, declared; pool units cannot be filtered this way)",
+        "Q": "eligible_Q(system) = BVEL13k system outside the partition universe and the development set AND passes Gate 0 AND the structure chosen by structure_rule has a 3-D percolating network AND the frozen ML-NEB converges on h*_3",
+        "structure_rule": "within a chemical system, the structure with the lowest critical BVSE barrier E*_3, ties by ascending material_id (covariate-only, identical for P and Q)",
+        "dimension_d": "d = 3, fixed by scientific reasoning before any count or outcome (macroscopic polycrystalline conduction needs a 3-D percolating network; LiTraj targets 3-D percolation); d = 1 is a descriptive sensitivity count only",
+        "additional_filters_recorded": "membership of h* in nebDFT2k is a dataset-construction filter on the P side; em_bvse and E*_d enter the density-ratio features so the filter is modelled as covariate shift",
+        "weight_slices": "frozen SHA-ranked held-out slices of eligible_P and eligible_Q systems, disjoint from every calibration and test unit, are used only to fit w_hat",
+        "implementation": "e3sse.screening.prospective_contract.funnel; e3sse.screening.rate_limiting_hop.rate_limiting_hop(dimension=3)",
+        "counts": "server evidence pending (linkage audit); never chosen from counts",
+        "structure_universe": "all materials with the same normalised chemical system (protocol.partitions.normalize_chemical_system) in nebBVSE122k union BVEL13k; identical for P and Q",
+        "chemical_system_normaliser": "protocol.partitions.normalize_chemical_system, applied to every dataset's chemsys (BVEL13k systems recomputed from structure species where provided)",
+        "structure_source": "one pristine host structure per material_id from the same source for development, calibration and pool units (never nebDFT2k vacancy supercells); source confirmed by the server descriptor-availability audit",
+        "gate0": "transition-metal/Hubbard-U exclusion (frozen pymatgen-transition-metal-union-mp2020-u-v1) and the nebDFT2k element criteria, evaluated from composition alone, identically for all populations",
+        "development": "published-test chemical systems with nebDFT2k hops, spanning systems excluded, one structure per system by structure_rule, its h*_3 if that hop is a nebDFT2k hop; disjoint from P and Q",
+        "nebDFT2k_inclusion_assumption": "treating h* in nebDFT2k as covariate shift assumes LiTraj's inclusion depended on the modelled BVSE/structural covariates and not on DFT NEB success; stated with every Study-5 result"
+      },
+      "model_selection_objective": {
+        "implementation": "e3sse.screening.prospective_contract.select_prospective_model",
+        "feasibility": "relative: convergence_rate and independent_support_coverage (measured on the label-free Q weight-fit slice, never on the development set that defines tau_d) each >= 0.5 x the best model's value",
+        "primary_loss": "MAE (eV) of the complete deployed predictor on the per-system rate-limiting development hops converged for every feasible model; feasibility is decided first, then the common set",
+        "tie_breakers": [
+          "lower RMSE",
+          "higher convergence_rate",
+          "canonical model name"
+        ],
+        "never": "fixed-geometry raw MAE, embedding quality, prospective selection count, test error, prestige",
+        "winners_curse": "the selected model's development MAE is never reported as a performance estimate"
+      },
+      "development_manifest_sha256": "server_evidence_pending"
+    },
+    "scope": {
+      "classification": "project owner's decision of 2026-11-01",
+      "study_3": "deferred: no ML-MD/FPMD transport analysis, no P2, no transport claim (RD C1 transport part) under internal-freeze protocol",
+      "study_2b": "folded into the deployment-faithful ML-NEB runs on nebDFT2k conformal-calibration hops; no separate campaign",
+      "relaxed_path_comparison": "secondary: per calibration hop, Delta E_ML-NEB - Delta E_fixed for raw and SRT barriers (tests Research Design Proposition 2: does the correction survive when the model finds its own path?)",
+      "pipeline": "calibration -> fixed-geometry transfer -> reliability -> deployment-faithful ML-NEB calibration -> controlled prospective screening"
+    }
+  },
+  "open_items": [
+    {
+      "id": "embedding_extraction_verification",
+      "blocking": true,
+      "required_resolution": "read-only probe in every pinned runtime: module, layer, dimension, determinism; record per model or mark latent support unavailable",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "ml_neb_settings",
+      "blocking": false,
+      "required_resolution": "freeze the ML-NEB rule in amendments.prospective.ml_neb (LiTraj-derived, with declared deviations) after mlip-specialist confirmation",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.ml_neb.frozen_numeric_settings",
+        "evidence": "mlip-specialist: LiTraj recovery verified; every numeric setting now recorded; version slots are server evidence"
+      }
+    },
+    {
+      "id": "statistical_validator_review",
+      "blocking": false,
+      "required_resolution": "review of applicability, selective_prediction, deployment_gate, endpoints, prospective split",
+      "history": "first review 2026-11-01: 4 major and 6 minor findings incorporated into this config and the applicability/selective-prediction code; re-review required before freeze",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "all statistical local items",
+        "evidence": "statistical-validator local specialist review 2026-11-01: 1,3,5,6,8 approve-with-fixes (applied), 2,4,9,10 approve, 7 rejected then fixed"
+      }
+    },
+    {
+      "id": "research_architect_review",
+      "blocking": false,
+      "required_resolution": "alignment of internal-freeze protocol with the Research Design and novelty boundary",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "architecture local items",
+        "evidence": "research-architect local specialist review 2026-11-01: rejection items implemented (access paths, splits, numeric settings, stale text)"
+      }
+    },
+    {
+      "id": "mlip_specialist_review",
+      "blocking": false,
+      "required_resolution": "representation and ML-NEB contracts",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "probe, ML-NEB settings, runtime audit design, path acceptance criteria",
+        "evidence": "mlip-specialist local specialist review 2026-11-01: probe fixes applied (translation, permutation, A-B-A, environment sensitivity, cloned capture, pre-hooks, call counts); criteria pre-specified"
+      }
+    },
+    {
+      "id": "literature_full_text_verification",
+      "blocking": false,
+      "required_resolution": "full-text check of LiTraj, OMat24, MatPES, Bai 2025, Jin-Candes 2023/2026 before novelty claims; does not change any analysis rule",
+      "non_blocking_reason": "changes no analysis rule; blocking for any manuscript novelty claim",
+      "supporting_source_unavailable": "E3-SSE_intro_literature-sent to the team.docx: supporting source not locally available during this implementation pass; claims depending on it alone remain unconfirmed",
+      "blocker_class": "documentation"
+    },
+    {
+      "id": "study3_and_study2b_scope",
+      "blocking": false,
+      "required_resolution": "retain or defer Study 3 (P2) and Study 2b explicitly; if P2 is deferred, state how P1 is Holm-finalised and record a deviation; C1 transport claims are withdrawn while deferred",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.scope and endpoints.primary_family",
+        "evidence": "project owner decision 2026-11-01, before any outcome inspection"
+      },
+      "blocker_class": "documentation"
+    },
+    {
+      "id": "prospective_gate_source",
+      "blocking": false,
+      "required_resolution": "BVEL13k candidates have no DFT forces: freeze a per-candidate Y-free gate source (latent support) or drop gating for Study 5; threshold fitted on the calibration-union-pool Y-free set",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.support_gate",
+        "evidence": "project owner decision 2026-11-01; development-set support population per statistical-validator and research-architect reviews"
+      },
+      "blocker_class": "documentation"
+    },
+    {
+      "id": "prospective_pipeline_details",
+      "blocking": false,
+      "required_resolution": "Gate-1 rule applied identically to calibration and pool; failed/non-converged ML-NEB policy; ML-NEB-to-nebDFT2k correspondence check; density-ratio classifier features",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "funnel, failure policy, Gate-1 rule, density-ratio estimator are specified",
+        "evidence": "research-architect: remaining parts split into server items (bvse_reproduction, descriptor_availability)"
+      }
+    },
+    {
+      "id": "combined_score_without_latent",
+      "blocking": false,
+      "required_resolution": "combined-score rule for a model whose latent support is unavailable",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "no combined score in any gate; deterministic fallback hierarchy",
+        "evidence": "research-architect: resolvable from existing config text"
+      }
+    },
+    {
+      "id": "prospective_descriptor_fallback_metric",
+      "blocking": false,
+      "required_resolution": "pre-declare the label-free descriptor set and distance for the fallback support metric, before embedding extraction results are known",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "configs/descriptor_fallback_manifest.json + support_gate (single metric, development-only LOCSO tau_d, unscaled one-hots)",
+        "evidence": "research-architect and data-engineer fixes applied (local specialist review 2026-11-01); availability is server evidence"
+      }
+    },
+    {
+      "id": "specialist_rereview",
+      "blocking": false,
+      "required_resolution": "fresh statistical-validator, research-architect and mlip-specialist reviews of the current diff, every blocking/major finding with a recorded resolution and re-check",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "five local reviews recorded",
+        "evidence": "statistical-validator, research-architect, code-reviewer, data-engineer, mlip-specialist (local specialist review 2026-11-01); findings applied in this pass"
+      }
+    },
+    {
+      "id": "ions_bvse_version_pin",
+      "blocking": true,
+      "required_resolution": "pin the ions package version for BVSE initialization and verify its paths reproduce nebDFT2k _init.xyz for calibration hops",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "failed_neb_policy",
+      "blocking": false,
+      "required_resolution": "statistical-validator and mlip-specialist confirmation of amendments.prospective.ml_neb.failure_policy",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.ml_neb.failure_policy + screening.prospective_contract.funnel (WCS-run FDR population, weight-fit hold-out stage)",
+        "evidence": "statistical-validator APPROVE after fixes (local specialist review 2026-11-01); tests/test_prospective_contract.py"
+      }
+    },
+    {
+      "id": "density_ratio_features",
+      "blocking": false,
+      "required_resolution": "statistical-validator confirmation of amendments.prospective.density_ratio",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.density_ratio (estimator, settings, diagnostics, claim, held-out split)",
+        "evidence": "statistical-validator APPROVE estimator and split (local specialist review 2026-11-01); feature availability is server evidence (descriptor_availability)"
+      }
+    },
+    {
+      "id": "prospective_gate1_rule",
+      "blocking": true,
+      "required_resolution": "rate-limiting-hop rule on the BVSE percolating network, from the G0-audited BVEL13k/nebBVSE122k schemas (data-engineer)",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "weighted_conformal_publication_check",
+      "blocking": false,
+      "required_resolution": "compare the implemented WCS with the Biometrika version of Jin & Candes",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.weighted_conformal",
+        "evidence": "published eq. 5/6 mapping and official ConfSelect triangulation; statistical-validator APPROVE"
+      }
+    },
+    {
+      "id": "prospective_model_selection_rule",
+      "blocking": false,
+      "required_resolution": "confirm the development-set selection rule before any conformal-calibration outcome",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.model_selection_objective + screening.prospective_contract.select_prospective_model",
+        "evidence": "statistical-validator rejection items (circular coverage, hop population, winner's curse) addressed (local specialist review 2026-11-01)"
+      }
+    },
+    {
+      "id": "applicability_fallback_hierarchy",
+      "blocking": true,
+      "required_resolution": "record which hierarchy branch applies per model from embedding_capability_manifest (rule itself is closed locally)",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "representation_geometry_source",
+      "blocking": false,
+      "required_resolution": "owner decision: single geometry source for development, calibration and pool",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.representation.geometry_source",
+        "evidence": "owner decision 2026-11-01, before any outcome inspection"
+      },
+      "blocker_class": "documentation"
+    },
+    {
+      "id": "hop_reduction_rule",
+      "blocking": false,
+      "required_resolution": "owner decision: one covariate-only hop-reduction rule for calibration and pool",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.dependence_unit",
+        "evidence": "owner decision 2026-11-01, before any outcome inspection"
+      },
+      "blocker_class": "documentation"
+    },
+    {
+      "id": "development_access_route",
+      "blocking": false,
+      "required_resolution": "dedicated outcome-access purpose for development-set model selection, restricted to the hashed development manifest",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "contracts purpose prospective_model_selection restricted to the pinned development manifest; tests/test_internal_freeze_protocol.py",
+        "evidence": "research-architect requirement implemented"
+      }
+    },
+    {
+      "id": "study1_internal_freeze_path",
+      "blocking": false,
+      "required_resolution": "Study 1 runs only under the frozen internal-freeze protocol (owner instruction: no Study-1 production before freeze); study1_inputs gains the internal-freeze path and records internal_freeze provenance",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "softening.study1_inputs.internal_freeze_binding; Study-1 runner/analysis use prespecified_analysis with internal-freeze provenance",
+        "evidence": "research-architect requirement implemented; tests/test_internal_freeze_protocol.py"
+      }
+    },
+    {
+      "id": "descriptor_family_handling",
+      "blocking": false,
+      "required_resolution": "exact anion-family matching versus fixed-weight one-hot in descriptor-space support",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.applicability.anion_family_handling + support_gate.family_handling",
+        "evidence": "statistical-validator APPROVE after one-hot fix; screening.prospective_contract.anion_family_record"
+      }
+    },
+    {
+      "id": "embedding_probe_server_run",
+      "blocking": true,
+      "required_resolution": "run scripts/probe_embedding_capability.py in every pinned runtime, pin hook captures where a documented API is absent, merge embedding_capability_manifest.json",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "path_representation_mapping",
+      "blocking": true,
+      "required_resolution": "freeze the per-model path-level representation after embedding verification (mlip-specialist), before any calibration outcome",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "rate_limiting_hop_algorithm",
+      "blocking": true,
+      "required_resolution": "data-engineer verification of amendments.prospective.rate_limiting_hop_algorithm on the actual data",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "server_unreachable",
+      "blocking": true,
+      "required_resolution": "aiserver (192.168.200.62) was unreachable from the development machine (port 22 timeout; wired link down); every server audit is pending network access",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "published_eq6_confirmation",
+      "blocking": false,
+      "required_resolution": "confirm the published Biometrika eq. 6 weight (w_j vs w_l); official ConfSelect code differs from arXiv eq. 6 / eq. 33",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "published Biometrika eq. 6 uses w(X_{n+j}); production follows it",
+        "evidence": "owner-supplied published equation; statistical-validator APPROVE (eq. 33 symmetry argument); regression test test_published_eq6_focal_weight_is_w_j_not_the_reference_code_w_l"
+      }
+    },
+    {
+      "id": "tie_rule_theory_review",
+      "blocking": false,
+      "required_resolution": "statistical-validator review of the lexicographic tie-key argument for Theorem 3.1 coverage",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.weighted_conformal.tie_rules",
+        "evidence": "statistical-validator APPROVE (local specialist review 2026-11-01) after unit-bound keys; tests/test_weighted_conformal_conformance.py"
+      }
+    },
+    {
+      "id": "population_dimension_and_structure_rule",
+      "blocking": false,
+      "required_resolution": "fix percolation dimensionality d and the one-structure-per-system rule from linkage-audit counts, before outcomes",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.populations.dimension_d (d = 3 by reasoning) and structure_rule",
+        "evidence": "statistical-validator and research-architect: d = 3 rationale sound and fixed before any count"
+      }
+    },
+    {
+      "id": "model_selection_constraints",
+      "blocking": false,
+      "required_resolution": "defensible convergence/coverage constraint thresholds for the development-set model-selection objective",
+      "blocker_class": "local_engineering",
+      "resolution": {
+        "status": "resolved",
+        "rule": "relative 0.5 feasibility floor on independent coverage and convergence",
+        "evidence": "statistical-validator: floor and tie-breakers acceptable"
+      }
+    },
+    {
+      "id": "bvse_reproduction",
+      "blocking": true,
+      "required_resolution": "ions version pin and ML-NEB-to-nebDFT2k path correspondence from the server reproduction audit",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "descriptor_availability",
+      "blocking": true,
+      "required_resolution": "source-field availability of every descriptor on the real schemas (data-engineer server audit)",
+      "blocker_class": "server_evidence"
+    },
+    {
+      "id": "development_manifest",
+      "blocking": true,
+      "required_resolution": "build and pin development_manifest_sha256 from the server linkage audit before any development outcome",
+      "blocker_class": "server_evidence"
+    }
+  ],
+  "declared_scope_revisions": [
+    "registration-gated historical protocol -> internal-freeze protocol governance revision made before production outcome inspection: external OSF registration replaced by an internal version-controlled freeze (see governance)",
+    "registration-gated historical protocol -> internal-freeze protocol scope revision made before production outcome inspection: registration-gated historical protocol planned Study 3 (P2) and an independent Study-2b campaign; internal-freeze protocol formally defers transport validation (Study 3, P2, RD contribution C1 transport claims) and reuses the deployment-required ML-NEB calibration runs to evaluate relaxed-path behaviour",
+    "pre-internal-freeze uncommitted work added a Study-1 OSF-pending path (study1_training_only); it was never executed, is archived on branch archive/osf-pending-study1-work as historical development evidence, and is not part of the active protocol's code ancestry"
+  ],
+  "blocker_classes": {
+    "local_engineering": "must all be resolved with reviewer evidence before the engineering checkpoint commit",
+    "server_evidence": "may remain open at the checkpoint commit; must be resolved before the internal scientific freeze",
+    "documentation": "non-blocking for both"
+  }
+}

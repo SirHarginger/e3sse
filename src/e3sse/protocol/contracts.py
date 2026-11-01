@@ -212,6 +212,9 @@ PILOT_TUNING_OUTCOME_KINDS = ("mplitrj_nonpath_dft_force", "mplitrj_nonpath_dft_
 # in the protocol before the pilot runs.
 PILOT_AMENDMENT_KEY_PREFIXES = ("study1_", "study2_")
 _OUTCOME_PURPOSES = {"preregistered_analysis", *_TUNING_PURPOSES}
+# Internal-freeze purposes: pre-specified analysis, and the development-set read that
+# selects the prospective model (only units of the pinned development manifest).
+_INTERNAL_FREEZE_PURPOSES = {"prespecified_analysis", "prospective_model_selection"}
 
 
 class OutcomeAccessDenied(PermissionError):
@@ -414,6 +417,9 @@ def require_outcome_access(
     partition_records: Sequence[Mapping[str, Any]] | None = None,
     unit_ids: Iterable[str] | None = None,
     outcome_kind: str | None = None,
+    internal_freeze_protocol: Mapping[str, Any] | None = None,
+    internal_pilot_record: Mapping[str, Any] | None = None,
+    development_manifest: Mapping[str, Any] | None = None,
 ) -> None:
     """Default-deny scientific outcomes; identifiers, counts, hashes, schemas never pass here.
 
@@ -426,6 +432,16 @@ def require_outcome_access(
     training-only pilot amendment, deposited by a registered OSF update naming it.
     FPMD outcomes also require a transport addendum declaring the transport branch
     ready.
+
+    ``internal_freeze_protocol`` selects the reliability-gated internal-freeze
+    governance (``e3sse.protocol.internal_freeze``,
+    ``internal_version_controlled_freeze``).  Seal 1 is then a validated, frozen
+    production internal-freeze protocol whose parent is exactly ``frozen_protocol``;
+    no OSF addendum is read.  Seal 2 is the same pilot amendment plus a hashed
+    internal pilot record binding it to that protocol.  Every other rule
+    (membership-verified training units, training-only tuning, the transport
+    addendum) is identical to the parent path.  Internal-freeze reads use
+    ``purpose="prespecified_analysis"``, never ``"preregistered_analysis"``.
     """
 
     roles = {
@@ -441,7 +457,9 @@ def require_outcome_access(
         raise OutcomeAccessDenied(f"unknown outcome-bearing role {role!r}")
     if not _nonempty_string(outcome):
         raise OutcomeAccessDenied("outcome must be a non-empty identifier")
-    if purpose not in _OUTCOME_PURPOSES:
+    if purpose in _INTERNAL_FREEZE_PURPOSES and internal_freeze_protocol is None:
+        raise OutcomeAccessDenied(f"{purpose} requires the internal-freeze protocol")
+    if purpose not in {*_OUTCOME_PURPOSES, *_INTERNAL_FREEZE_PURPOSES}:
         raise OutcomeAccessDenied(f"unknown outcome-access purpose {purpose!r}")
     if purpose in _TUNING_PURPOSES and outcome_kind not in PILOT_TUNING_OUTCOME_KINDS:
         raise OutcomeAccessDenied(
@@ -453,6 +471,28 @@ def require_outcome_access(
         validate_protocol_freeze_for_outcome_access(frozen_protocol)
     except (KeyError, TypeError, ValueError):
         raise OutcomeAccessDenied(f"{role} outcome {outcome!r} is sealed before protocol freeze")
+    if internal_freeze_protocol is not None:
+        # Internal freeze never claims pre-registration: its analyses are pre-specified.
+        if purpose == "preregistered_analysis":
+            raise OutcomeAccessDenied(
+                "internal-freeze analyses are pre-specified, not pre-registered; "
+                "use purpose='prespecified_analysis'"
+            )
+        _require_internal_freeze_outcome_access(
+            role=role,
+            outcome=outcome,
+            purpose=purpose,
+            outcome_kind=outcome_kind,
+            frozen_protocol=frozen_protocol,
+            internal_freeze_protocol=internal_freeze_protocol,
+            internal_pilot_record=internal_pilot_record,
+            development_manifest=development_manifest,
+            pilot_amendment=pilot_amendment,
+            transport_addendum=transport_addendum,
+            partition_records=partition_records,
+            unit_ids=unit_ids,
+        )
+        return
     try:
         from .registration import registration_status
 
@@ -479,6 +519,84 @@ def require_outcome_access(
         # outcomes need the registered OSF update that deposits this exact amendment.
         if registration_addendum.get("pilot_amendment_id") != pilot_amendment["amendment_id"]:
             raise ValueError("non-training outcomes need a registered OSF update of this pilot amendment")
+        if role == "fpmd_reference":
+            validate_transport_addendum(transport_addendum, frozen_protocol)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OutcomeAccessDenied(f"{role} outcome {outcome!r} remains sealed: {exc}") from exc
+
+
+def _verify_development_manifest(
+    manifest: Mapping[str, Any] | None,
+    internal_freeze_protocol: Mapping[str, Any],
+    unit_ids: Iterable[str] | None,
+) -> None:
+    """Development reads only: the manifest hash is pinned in the frozen protocol and
+    every requested unit is a development hop (disjoint from calibration and pool)."""
+
+    if not isinstance(manifest, Mapping):
+        raise TypeError("prospective_model_selection needs the development manifest")
+    pinned = (internal_freeze_protocol.get("amendments", {}).get("prospective", {})
+              .get("development_manifest_sha256"))
+    content = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
+    digest = hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=False).encode()).hexdigest()
+    if pinned is None or digest != pinned:
+        raise ValueError("development manifest is not the one pinned in the frozen protocol")
+    allowed = set(manifest.get("hop_ids", []))
+    requested = set(unit_ids or [])
+    if not requested or not requested <= allowed:
+        raise ValueError("development reads are restricted to the pinned development hops")
+
+
+def _require_internal_freeze_outcome_access(
+    *,
+    role: str,
+    outcome: str,
+    purpose: str,
+    outcome_kind: str | None,
+    frozen_protocol: Mapping[str, Any],
+    internal_freeze_protocol: Mapping[str, Any],
+    internal_pilot_record: Mapping[str, Any] | None,
+    development_manifest: Mapping[str, Any] | None,
+    pilot_amendment: Mapping[str, Any] | None,
+    transport_addendum: Mapping[str, Any] | None,
+    partition_records: Sequence[Mapping[str, Any]] | None,
+    unit_ids: Iterable[str] | None,
+) -> None:
+    """Internal-freeze seals: frozen internal protocol (seal 1), bound pilot amendment (seal 2)."""
+
+    from .internal_freeze import (
+        validate_internal_freeze_protocol,
+        validate_internal_pilot_record,
+    )
+
+    try:
+        validate_internal_freeze_protocol(internal_freeze_protocol, frozen_protocol)
+        if purpose == "prospective_model_selection":
+            _verify_development_manifest(development_manifest, internal_freeze_protocol, unit_ids)
+            validate_pilot_amendment(pilot_amendment, frozen_protocol)
+            validate_internal_pilot_record(
+                internal_pilot_record, internal_freeze_protocol, frozen_protocol, pilot_amendment
+            )
+            return
+        if role in _TUNING_ROLES:
+            kinds = _verify_training_units(frozen_protocol, partition_records, unit_ids)
+            if purpose in _TUNING_PURPOSES and kinds != {"mplitrj_nonpath_frame"}:
+                raise ValueError(
+                    f"tuning units must all be published-train non-path frames, got {sorted(kinds)}"
+                )
+            if "nebdft2k_barrier" in kinds or str(outcome_kind or "").startswith(
+                "nebdft2k_barrier"
+            ):
+                validate_pilot_amendment(pilot_amendment, frozen_protocol)
+                validate_internal_pilot_record(
+                    internal_pilot_record, internal_freeze_protocol, frozen_protocol, pilot_amendment
+                )
+            return
+        validate_pilot_amendment(pilot_amendment, frozen_protocol)
+        validate_internal_pilot_record(
+            internal_pilot_record, internal_freeze_protocol, frozen_protocol, pilot_amendment
+        )
         if role == "fpmd_reference":
             validate_transport_addendum(transport_addendum, frozen_protocol)
     except (KeyError, TypeError, ValueError) as exc:

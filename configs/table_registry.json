@@ -1,0 +1,342 @@
+{
+  "schema_version": "e3sse.table-registry",
+  "rules": [
+    "full precision in derived/",
+    "rounded copies in tables/",
+    "never analyse rounded values"
+  ],
+  "tables": [
+    {
+      "table_id": "A1_datasets",
+      "columns": [
+        "dataset",
+        "role",
+        "n_materials",
+        "n_hops_or_frames",
+        "reference_method",
+        "partition_role",
+        "primary_exclusions"
+      ],
+      "source": "audited manifests"
+    },
+    {
+      "table_id": "A2_models",
+      "columns": [
+        "model",
+        "training_dataset",
+        "checkpoint_version",
+        "model_family",
+        "runtime_environment",
+        "training_regime"
+      ],
+      "source": "frozen model registry"
+    },
+    {
+      "table_id": "B_transfer",
+      "columns": [
+        "model",
+        "method",
+        "n_paired_hops",
+        "coverage",
+        "mae_eV",
+        "rmse_eV",
+        "signed_error_eV",
+        "spearman",
+        "precision",
+        "recall",
+        "f1",
+        "ci95",
+        "relative_improvement",
+        "population_sha256"
+      ],
+      "note": "deployable rows separated from B5 supervised and B6 oracle"
+    },
+    {
+      "table_id": "C_applicability",
+      "columns": [
+        "model",
+        "framing",
+        "score",
+        "coverage",
+        "retained_n",
+        "mae_full_eV",
+        "mae_target_coverage_eV",
+        "aurc",
+        "e_aurc",
+        "normalized_gain",
+        "abstention_rate",
+        "spearman_with_benefit"
+      ]
+    },
+    {
+      "table_id": "D_label_efficiency",
+      "columns": [
+        "model",
+        "method",
+        "K",
+        "softening_error",
+        "bootstrap_sd",
+        "downstream_mae_eV",
+        "fraction_supported"
+      ]
+    },
+    {
+      "table_id": "E_selection",
+      "columns": [
+        "method",
+        "alpha",
+        "c_eV",
+        "realized_fdr",
+        "mc_se",
+        "power",
+        "mean_selection_size",
+        "zero_selection_fraction"
+      ]
+    },
+    {
+      "table_id": "F_prospective",
+      "columns": [
+        "candidate_id",
+        "formula",
+        "family",
+        "bvse_eV",
+        "raw_eV",
+        "srt_eV",
+        "applicability_status",
+        "s_hat",
+        "uncertainty",
+        "conformal_p",
+        "selection_status",
+        "validation_level"
+      ],
+      "note": "rows only after the prospective run exists"
+    },
+    {
+      "table_id": "G_prior_work",
+      "columns": [
+        "work",
+        "detects_softening",
+        "corrects_softening",
+        "no_retraining",
+        "independent_target_hop_calibration",
+        "label_budget_law",
+        "applicability_abstention",
+        "risk_controlled_selection",
+        "prospective_sse_screen"
+      ],
+      "note": "every checkmark source-verified in full text"
+    },
+    {
+      "table_id": "H_literature_context",
+      "columns": [
+        "work",
+        "metric",
+        "value",
+        "split",
+        "protocol_mismatch"
+      ],
+      "note": "never paired with E3-SSE results"
+    },
+    {
+      "table_id": "I_embedding_capability",
+      "columns": [
+        "model",
+        "checkpoint_sha256",
+        "runtime",
+        "package_versions",
+        "interface",
+        "selected_interface",
+        "layer_or_capture",
+        "atom_or_structure",
+        "dimension",
+        "pooling",
+        "dtype",
+        "finite",
+        "deterministic",
+        "translation_invariant",
+        "rotation_invariant",
+        "permutation_consistent",
+        "batch_consistent",
+        "cpu",
+        "peak_rss_bytes",
+        "status"
+      ]
+    },
+    {
+      "table_id": "J_rate_limiting_hop_linkage",
+      "columns": [
+        "population",
+        "total_structures",
+        "linked",
+        "unlinked",
+        "ambiguous",
+        "no_percolating_network",
+        "tie_cases",
+        "schema_mismatches",
+        "eligible_final",
+        "dimension_d",
+        "rate_limiting_hop_in_nebDFT2k"
+      ]
+    },
+    {
+      "table_id": "K_ml_neb_reproduction",
+      "columns": [
+        "component",
+        "pinned_version",
+        "litraj_reference",
+        "check",
+        "result",
+        "wall_seconds_per_neb",
+        "cpu_threads"
+      ]
+    },
+    {
+      "table_id": "L_ml_neb_attrition",
+      "columns": [
+        "model",
+        "gate1",
+        "attempted",
+        "converged",
+        "failed_by_category",
+        "supported",
+        "eligible",
+        "selected"
+      ],
+      "note": "explicit denominators per amendments.prospective.populations"
+    },
+    {
+      "table_id": "M_applicability_support",
+      "columns": [
+        "model",
+        "representation_source",
+        "dimension",
+        "k",
+        "quantile_level",
+        "tau_d",
+        "n_reference",
+        "n_chemical_systems",
+        "coverage_development",
+        "coverage_calibration",
+        "coverage_prospective"
+      ]
+    },
+    {
+      "table_id": "N_density_ratio_diagnostics",
+      "columns": [
+        "n_P",
+        "n_Q",
+        "l2",
+        "iterations",
+        "auc",
+        "ess",
+        "max_weight",
+        "w_q05",
+        "w_q50",
+        "w_q95",
+        "overlap_P",
+        "overlap_Q",
+        "clipping"
+      ]
+    },
+    {
+      "table_id": "O_weighted_conformal_conformance",
+      "columns": [
+        "comparison",
+        "fixtures",
+        "scenario",
+        "agreement",
+        "notes"
+      ]
+    },
+    {
+      "table_id": "P_prospective_funnel",
+      "columns": [
+        "gate",
+        "definition",
+        "count",
+        "denominator"
+      ]
+    },
+    {
+      "table_id": "Q_candidate_evidence",
+      "columns": [
+        "candidate_id",
+        "formula",
+        "chemical_system",
+        "anion_family",
+        "bvse_eV",
+        "raw_ml_neb_eV",
+        "srt_eV",
+        "support_distance",
+        "conformal_p",
+        "selected",
+        "validation_level"
+      ],
+      "note": "rows only after the prospective run"
+    },
+    {
+      "table_id": "R_descriptor_availability",
+      "columns": [
+        "feature",
+        "source_field",
+        "population",
+        "n_units",
+        "n_missing",
+        "finite_fraction"
+      ],
+      "note": "server validation; no result values before production"
+    },
+    {
+      "table_id": "S_endpoints",
+      "columns": [
+        "endpoint",
+        "model",
+        "estimand",
+        "estimate",
+        "ci95",
+        "p_value",
+        "holm_adjusted_p",
+        "verdict"
+      ],
+      "note": "P1_m rho_SRT (primary Holm family), P4_m Delta-AURC (key-secondary family), H6 support/refute/inconclusive incl. |raw barrier| baseline; P3 validity"
+    },
+    {
+      "table_id": "T_model_selection",
+      "columns": [
+        "model",
+        "feasible",
+        "convergence_rate",
+        "independent_support_coverage",
+        "mae_common_eV",
+        "rmse_common_eV",
+        "rank"
+      ],
+      "note": "development MAE of the selected model is not a performance estimate"
+    },
+    {
+      "table_id": "U_gate_threshold_accounting",
+      "columns": [
+        "population",
+        "model",
+        "diagnostic",
+        "threshold",
+        "n_population",
+        "n_used",
+        "n_unsupported",
+        "n_undefined_supported",
+        "realised_coverage"
+      ]
+    },
+    {
+      "table_id": "V_relaxed_vs_fixed_geometry",
+      "columns": [
+        "model",
+        "n_hops",
+        "mean_difference_raw_eV",
+        "mean_difference_srt_eV",
+        "ci95",
+        "converged_fraction"
+      ]
+    }
+  ]
+}

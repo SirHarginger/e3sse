@@ -1,0 +1,138 @@
+{
+  "schema": "e3sse.descriptor-fallback-manifest",
+  "implementation": "e3sse.screening.applicability_support.descriptor_vector, fit_reference(unscaled_columns=FAMILY_COLUMNS)",
+  "label_free": true,
+  "populations": "identical computation for development, conformal-calibration and prospective units",
+  "geometry_source": "structure and BVSE covariates; no DFT or ML outcome",
+  "features": [
+    {
+      "name": "li_atomic_fraction",
+      "definition": "n_Li / n_atoms (composition)",
+      "unit": "dimensionless",
+      "dtype": "float64",
+      "transformation": "none before standardization",
+      "source_field": "structure species",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "z-score with development-population mean and SD"
+    },
+    {
+      "name": "mean_atomic_number",
+      "definition": "mean Z over atoms",
+      "unit": "dimensionless",
+      "dtype": "float64",
+      "transformation": "none before standardization",
+      "source_field": "structure species",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "z-score with development-population mean and SD"
+    },
+    {
+      "name": "sd_atomic_number",
+      "definition": "population SD of Z over atoms",
+      "unit": "dimensionless",
+      "dtype": "float64",
+      "transformation": "none before standardization",
+      "source_field": "structure species",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "z-score with development-population mean and SD"
+    },
+    {
+      "name": "volume_per_atom_A3",
+      "definition": "cell volume / n_atoms (A^3)",
+      "unit": "A^3",
+      "dtype": "float64",
+      "transformation": "none before standardization",
+      "source_field": "structure cell and species",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "z-score with development-population mean and SD"
+    },
+    {
+      "name": "li_number_density_per_A3",
+      "definition": "n_Li / cell volume (A^-3)",
+      "unit": "A^-3",
+      "dtype": "float64",
+      "transformation": "none before standardization",
+      "source_field": "structure cell and species",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "z-score with development-population mean and SD"
+    },
+    {
+      "name": "hop_length_A",
+      "definition": "|r_t + o.L - r_s| of h*_3 using its own cell offset o (not minimum image)",
+      "unit": "A",
+      "dtype": "float64",
+      "transformation": "none before standardization",
+      "source_field": "BVSE path endpoints of h*_3 (nebBVSE122k edge geometry)",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "z-score with development-population mean and SD"
+    },
+    {
+      "name": "em_bvse_eV",
+      "definition": "BVSE barrier of the rate-limiting hop (nebBVSE122k, covariate)",
+      "unit": "eV",
+      "dtype": "float64",
+      "transformation": "none before standardization",
+      "source_field": "nebBVSE122k em_bvse of h*_3 (the nebDFT2k em_bvse column is not used)",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "z-score with development-population mean and SD"
+    },
+    {
+      "name": "family_oxide",
+      "definition": "one-hot of the frozen dominant-anion-count-v1 family",
+      "unit": "dimensionless",
+      "dtype": "float64",
+      "transformation": "one-hot indicator",
+      "source_field": "composition via dominant-anion-count-v1",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "none: one-hot indicator with fixed unit weight (not z-scored)"
+    },
+    {
+      "name": "family_sulfide",
+      "definition": "one-hot of the frozen dominant-anion-count-v1 family",
+      "unit": "dimensionless",
+      "dtype": "float64",
+      "transformation": "one-hot indicator",
+      "source_field": "composition via dominant-anion-count-v1",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "none: one-hot indicator with fixed unit weight (not z-scored)"
+    },
+    {
+      "name": "family_halide",
+      "definition": "one-hot of the frozen dominant-anion-count-v1 family",
+      "unit": "dimensionless",
+      "dtype": "float64",
+      "transformation": "one-hot indicator",
+      "source_field": "composition via dominant-anion-count-v1",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "none: one-hot indicator with fixed unit weight (not z-scored)"
+    },
+    {
+      "name": "family_nitride",
+      "definition": "one-hot of the frozen dominant-anion-count-v1 family",
+      "unit": "dimensionless",
+      "dtype": "float64",
+      "transformation": "one-hot indicator",
+      "source_field": "composition via dominant-anion-count-v1",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "none: one-hot indicator with fixed unit weight (not z-scored)"
+    },
+    {
+      "name": "family_other",
+      "definition": "one-hot of the frozen dominant-anion-count-v1 family",
+      "unit": "dimensionless",
+      "dtype": "float64",
+      "transformation": "one-hot indicator",
+      "source_field": "composition via dominant-anion-count-v1",
+      "missing_value_rule": "unit unsupported (fail closed), never imputed",
+      "normalization": "none: one-hot indicator with fixed unit weight (not z-scored)"
+    }
+  ],
+  "standardization": "z-score fitted on the development population only",
+  "missing": "any missing feature makes the unit unsupported (fail closed); never imputed",
+  "status": {
+    "descriptor_design": "closed locally",
+    "descriptor_availability": "server validation pending"
+  },
+  "structure_source": "one pristine host structure per material_id from the same source for development, calibration and BVEL13k units (never nebDFT2k vacancy NEB supercells)",
+  "distance": "mean Euclidean distance to the k=5 nearest development-reference units (continuous features z-scored on the development population; one-hots unscaled)",
+  "threshold": "tau_d = quantile 0.80 of leave-one-chemical-system-out distances over the development population"
+}

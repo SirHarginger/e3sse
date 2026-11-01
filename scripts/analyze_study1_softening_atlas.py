@@ -140,9 +140,10 @@ def main(argv: list[str] | None = None) -> int:
     source = inputs.mplitrj_source(protocol, config["inference"]["source_file"])
     frames = inputs.published_train_frames(records, source)
     try:
+        internal_freeze = inputs.internal_freeze_binding(config, protocol)
         inputs.require_study1_outcome_access(
             protocol, inputs.registration_addendum(protocol_dir), records,
-            [row["frame_id"] for row in frames],
+            [row["frame_id"] for row in frames], internal_freeze_protocol=internal_freeze,
         )
     except inputs.Study1InputError as exc:
         raise SystemExit(f"stopped before reading any statistic: {exc}") from exc
@@ -476,6 +477,7 @@ def main(argv: list[str] | None = None) -> int:
         "execution_manifest": str(result.manifest_path),
         "implementation_git_sha": git_sha,
         "implementation_git_dirty": git_dirty,
+        "outcome_governance": inputs.outcome_governance_provenance(internal_freeze),
         "study1_config_sha256": config_sha,
         "interpretation_notes_extra": {
             "label_budget_sd": "ddof=1; H4 decision for the primary population only",

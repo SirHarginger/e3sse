@@ -120,27 +120,76 @@ def registration_addendum(root: Path) -> dict[str, Any] | None:
     return load_json(path) if path.is_file() else None
 
 
+def internal_freeze_binding(
+    config: Mapping[str, Any], protocol: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """The reliability-gated internal-freeze protocol pinned in the Study-1 config, if any.
+
+    Binding: ``internal_freeze_protocol`` = {"protocol_id", "file_sha256",
+    "directory"}.  The artifact's bytes must match the pin, and the artifact must be a
+    frozen production internal-freeze protocol whose parent is this frozen protocol.
+    Without a binding Study 1 stays on the registration-gated historical path.
+    """
+
+    from e3sse.protocol.internal_freeze import validate_internal_freeze_protocol
+
+    pin = config.get("internal_freeze_protocol")
+    if pin is None:
+        return None
+    path = Path(pin["directory"]) / "internal_freeze_protocol.json"
+    if file_sha256(path) != pin["file_sha256"]:
+        raise Study1InputError("internal-freeze protocol file differs from its pinned SHA-256")
+    internal = load_json(path)
+    if internal.get("protocol_id") != pin["protocol_id"]:
+        raise Study1InputError("internal-freeze protocol_id differs from its pin")
+    try:
+        validate_internal_freeze_protocol(internal, protocol)
+    except ValueError as exc:
+        raise Study1InputError(f"internal-freeze protocol invalid: {exc}") from exc
+    return internal
+
+
 def require_study1_outcome_access(
     protocol: Mapping[str, Any],
     addendum: Mapping[str, Any] | None,
     records: Sequence[Mapping[str, Any]],
     frame_ids: Sequence[str],
+    internal_freeze_protocol: Mapping[str, Any] | None = None,
 ) -> None:
-    """The repository's seal 1 for published-train MPLiTrj labels; raises when sealed."""
+    """Seal 1 for published-train MPLiTrj labels; raises when sealed.
 
+    With a validated internal-freeze protocol, access uses
+    ``purpose="prespecified_analysis"`` and needs no registration addendum.  Without
+    one, the registration-gated historical rule applies unchanged.
+    """
+
+    governance = (
+        {"purpose": "prespecified_analysis", "internal_freeze_protocol": internal_freeze_protocol}
+        if internal_freeze_protocol is not None
+        else {"purpose": "preregistered_analysis", "registration_addendum": addendum}
+    )
     try:
         require_outcome_access(
             role="train",
             outcome=STUDY1_OUTCOME,
             frozen_protocol=protocol,
-            purpose="preregistered_analysis",
-            registration_addendum=addendum,
             partition_records=records,
             unit_ids=frame_ids,
             outcome_kind="mplitrj_published_train_dft_forces_energies",
+            **governance,
         )
     except OutcomeAccessDenied as exc:
         raise Study1InputError(f"Study 1 outcomes are sealed: {exc}") from exc
+
+
+def outcome_governance_provenance(internal: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Provenance fields recording which governance unsealed the Study-1 labels."""
+
+    if internal is None:
+        return {"governance": "registration_gated_historical", "preregistration_claimed": True}
+    from e3sse.protocol.internal_freeze import internal_freeze_provenance
+
+    return internal_freeze_provenance(internal)
 
 
 def frozen_models(protocol: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
