@@ -32,11 +32,31 @@ accept the terms of use, download the CSV into `data/manual/`, then run
 **Layout:** `data/downloads/` (transient zips), `data/raw/` (read-only), `data/manual/` (hand-downloaded
 originals), `data/manifest.json` (URL, md5, SHA-256, UTC time, status for every item).
 
-Gate G0 writes canonical JSON and per-dataset resume checkpoints below
-`outputs/g0/<run-id>/`. It inventories observed schemas and retains nullable
-chemical-system, material, structure, hop, NEB-path, frame, and published-split
-identifiers. Missing or undocumented identifiers and units remain explicit
-unresolved issues; the audit never invents them.
+Gate G0 writes canonical JSON, per-dataset resume checkpoints and a full input
+manifest (`inputs.json`) below `outputs/g0/<run-id>/`. Each dataset is judged
+against its scientific role: every identifier dimension and capability records a
+`requirement` (required / optional / not_applicable) and an `availability`
+(source_provided / derived / unavailable). Status is `pass`, `partial` (a required
+capability is genuinely unresolved) or `fail` (absent or unreadable data).
+Energies, forces and stresses are read from ASE `atoms.calc.results`. nebDFT2k
+hops are paired exactly as `<edge_id>_init.xyz` / `<edge_id>_relaxed.xyz`.
+MPLiTrj splits are derived from the source filename and frame IDs are derived
+as `<source-file>:<index>`. `data/downloads/MPLiTrj_raw.zip` is inspected
+read-only to test, on a bounded sample, whether flattened frames map back to hops.
+`same_hop_exclusion_supported` stays false until a full frame-to-hop provenance
+index exists. Large diagnostics keep exact counts with bounded examples. The audit
+never invents identifiers or values.
+
+FPMD AiiDA queries run in a separate pinned Python 3.12 environment. The
+inventory command opens modern archives through AiiDA's read-only
+`core.sqlite_zip` backend; an incompatible legacy archive is migrated only to
+a derived copy below configured scratch. Gate G0 validates the inventory
+schema, self-digest, Git/code and dependency-lock identity, policy, exact
+archive set and full source-archive SHA-256 values before accepting any
+structure, trajectory, temperature, diffusion, MSD or provenance capability.
+Legacy and 2026-family results remain separate: 2026 extension failures are
+reported, while the gate is based on the configured required legacy PBE archive
+and their demonstrated scientific capabilities.
 
 **Licences and citations:** LiTraj (Dembitskiy et al., npj Comput. Mater. 2025; structures from Materials
 Project, CC BY 4.0); FPMD archives CC BY 4.0 (Kahle et al., EES 2020, doi:10.24435/materialscloud:vg-ya;

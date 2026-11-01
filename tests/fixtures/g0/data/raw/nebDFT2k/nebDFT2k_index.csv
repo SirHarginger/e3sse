@@ -1,2 +1,2 @@
-edge_id,material_id,structure_id,chemsys,_split,migration_barrier
-hop-1,mat-1,structure-1,Li-O,train,0.42
+material_id,edge_id,chemsys,has_specific_TM,em_bvse,em_dft,_split
+mp-1,mp-1_0_1_1_0_0,Li-O,False,0.40,0.42,train

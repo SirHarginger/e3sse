@@ -1,2 +1,2 @@
-material_id,structure_id,edge_id,path_id,split
-mat-1,structure-1,bvse-hop-1,bvse-path-1,train
+material_id,edge_id,chemsys,em_bvse,_split
+mp-1,mp-1_0_1_1_0_0,Li-O,0.4,train

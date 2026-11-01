@@ -8,7 +8,6 @@ from typing import Any
 
 import yaml
 
-
 REQUIRED_PATHS = ("data_root", "outputs_root", "logs_root", "scratch_root")
 
 
@@ -33,7 +32,8 @@ def load_config(path: str | Path) -> dict[str, Any]:
             raise ValueError(f"Unsupported configuration format: {config_path.suffix}")
 
     if not isinstance(config, dict) or not isinstance(config.get("paths"), dict):
-        raise ValueError("Configuration must contain a 'paths' object")
+        # Malformed configuration content is a value error for callers, not a type error.
+        raise ValueError("Configuration must contain a 'paths' object")  # noqa: TRY004
     paths = config["paths"]
     missing = [key for key in REQUIRED_PATHS if not paths.get(key)]
     if missing:

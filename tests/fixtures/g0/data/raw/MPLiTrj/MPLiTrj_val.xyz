@@ -1,0 +1,4 @@
+2
+Lattice="4.0 0.0 0.0 0.0 4.0 0.0 0.0 0.0 4.0" Properties=species:S:1:pos:R:3:forces:R:3 material_id=mp-2 energy=-8.0 free_energy=-8.0 stress="0.1 0.0 0.0 0.0 0.1 0.0 0.0 0.0 0.1" pbc="T T T"
+Li 0.3 0.0 0.0 0.1 0.0 0.0
+O 1.0 0.0 0.0 -0.1 0.0 0.0

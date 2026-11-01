@@ -1,1 +1,3 @@
-Synthetic inventory fixture: material_id=mat-1; temperature metadata is not authoritative.
+Synthetic FPMD documentation fixture. The archives contain starting structures,
+trajectories at several temperatures, diffusion coefficients and mean-square
+displacements (MSD) with full provenance.
