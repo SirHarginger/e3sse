@@ -48,6 +48,10 @@ extend-exclude = [".agents"]
 "src/e3sse/execution/sharded_execution.py" = ["BLE001"]
 # A model failure on one frame is that frame's recorded scientific status.
 "src/e3sse/softening/study1_inference.py" = ["BLE001"]
+# A benchmark worker reports any failure (even BaseException) to its parent as infrastructure.
+"src/e3sse/execution/workload_benchmark.py" = ["BLE001"]
+# An unexpected stage crash becomes a recorded infrastructure outcome with its traceback.
+"src/e3sse/production/orchestrator.py" = ["BLE001"]
 # Any shard-run failure is written to the run record before it is re-raised.
 "scripts/run_study1_softening_atlas.py" = ["BLE001"]
 # Pre-existing acquisition script, outside Gate G0 scope; not restyled here.

@@ -196,3 +196,27 @@ def test_published_partition_uses_per_frame_split_and_seals_validation():
         "excluded_unassigned_partition_role": 1,
     }
     _guard(selection)
+
+
+def test_production_stage_scope_refuses_other_outcome_kinds(monkeypatch):
+    import pytest
+
+    from e3sse.protocol.contracts import (
+        STAGE_OUTCOME_ACCESS_ENV,
+        OutcomeAccessDenied,
+        require_outcome_access,
+    )
+
+    monkeypatch.setenv(STAGE_OUTCOME_ACCESS_ENV, "[]")  # e.g. a pre-freeze stage
+    with pytest.raises(OutcomeAccessDenied, match="may read only"):
+        require_outcome_access(role="train", outcome="forces",
+                               outcome_kind="mplitrj_published_train_dft_forces_energies")
+    monkeypatch.setenv(STAGE_OUTCOME_ACCESS_ENV, "not json")
+    with pytest.raises(OutcomeAccessDenied, match="unreadable"):
+        require_outcome_access(role="train", outcome="forces", outcome_kind="x")
+    monkeypatch.setenv(STAGE_OUTCOME_ACCESS_ENV,
+                       '["mplitrj_published_train_dft_forces_energies"]')
+    with pytest.raises(OutcomeAccessDenied) as other:  # in scope: the usual seals then apply
+        require_outcome_access(role="train", outcome="forces",
+                               outcome_kind="mplitrj_published_train_dft_forces_energies")
+    assert "may read only" not in str(other.value)

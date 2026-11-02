@@ -405,6 +405,31 @@ def _unit_kinds(
     return kinds
 
 
+STAGE_OUTCOME_ACCESS_ENV = "E3SSE_STAGE_OUTCOME_ACCESS"
+
+
+def _require_stage_outcome_scope(outcome_kind: str | None) -> None:
+    """Production stage boundary: when the orchestrator declares the stage's permitted
+    outcome kinds (a JSON list in ``E3SSE_STAGE_OUTCOME_ACCESS``), refuse any other.
+
+    Unset (a direct, non-orchestrated call) leaves the other seals unchanged.  A set
+    but unreadable value, or an access without ``outcome_kind``, is refused.
+    """
+
+    import os
+
+    declared = os.environ.get(STAGE_OUTCOME_ACCESS_ENV)
+    if declared is None:
+        return
+    try:
+        permitted = json.loads(declared)
+    except json.JSONDecodeError as exc:
+        raise OutcomeAccessDenied(f"unreadable {STAGE_OUTCOME_ACCESS_ENV}") from exc
+    if not isinstance(permitted, list) or outcome_kind not in permitted:
+        raise OutcomeAccessDenied(
+            f"this production stage may read only {permitted}, not {outcome_kind!r}")
+
+
 def require_outcome_access(
     *,
     role: str,
@@ -444,6 +469,7 @@ def require_outcome_access(
     ``purpose="prespecified_analysis"``, never ``"preregistered_analysis"``.
     """
 
+    _require_stage_outcome_scope(outcome_kind)
     roles = {
         "train",
         "calibration",

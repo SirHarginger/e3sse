@@ -1,0 +1,502 @@
+{
+  "schema_version": "e3sse.production-execution.config",
+  "description": "One resumable production run of E3-SSE: ESTIMATE -> DIAGNOSE -> CORRECT OR ABSTAIN -> SELECT -> DISCOVER. Scientific rules come from the active protocol; this file binds inputs, stage order and evidence locations. resource_policy and resource_profiling are operational and never enter the run identity.",
+  "scientific_bindings": {
+    "active_protocol_config": "reliability_gated_internal_freeze_protocol.json",
+    "protocol_freeze_config": "protocol_freeze.json",
+    "study1_config": "study1_softening_atlas.json",
+    "server_config": "server.json",
+    "figure_registry": "figure_registry.json",
+    "table_registry": "table_registry.json",
+    "descriptor_fallback_manifest": "descriptor_fallback_manifest.json"
+  },
+  "output": {
+    "production_subdirectory": "production"
+  },
+  "runtime": {
+    "model_runtime_root": "~/.venvs",
+    "checkpoint_map": "/srv/ben/e3sse/outputs/model_checkpoints/checkpoint_map.json",
+    "require_clean_worktree": true,
+    "expected_commit": null,
+    "tmpdir": "../scratch",
+    "note": "model_runtime_root matches configs/study1_softening_atlas.json; on aiserver it resolves to /home/soft/.venvs for the account that created the frozen environments. tmpdir is resolved against outputs_root and keeps temporary files off the RAM-backed /tmp."
+  },
+  "evidence": {
+    "relative_to": "outputs_root",
+    "gate1_linkage_audit": "gate1_linkage/rate_limiting_hop_linkage_audit.json",
+    "gate1_population_audit_dir": "gate1_linkage",
+    "ml_neb_runtime_audit_dir": "ml_neb_runtime_audit",
+    "resource_profile_dir": "production_resource_profiles"
+  },
+  "freeze": {
+    "existing_binding": null,
+    "require_outcome_runners_implemented": true,
+    "note": "existing_binding null: the freeze stage materializes the internal freeze from the clean HEAD after preflight passes; once a freeze exists and the code moves on, pin it here as {protocol_id, file_sha256, directory}. require_outcome_runners_implemented true: the freeze waits until every outcome-reading stage has a tested runner, so no analysis code is written after outcomes are seen; setting it false is a declared deviation recorded with the run."
+  },
+  "preflight": {
+    "rehash_datasets": true
+  },
+  "resource_policy": {
+    "classification": "operational",
+    "memory_reserve_gib": 2.5,
+    "memory_reserve_fraction": 0.12,
+    "memory_safety_factor": 1.35,
+    "max_threads_per_worker": 16,
+    "statistics_worker_memory_gib": 0.75,
+    "memory_pressure_wait_seconds": 900,
+    "numa_policy": "kernel_default_local_allocation_no_binding",
+    "rationale": "The reserve is the larger of 2.5 GiB and 12% of RAM (orchestrator, page cache, load spikes); swap is never capacity. Peak RSS is planned at 1.35x the measured VmHWM. NUMA pinning is not applied: the memory budget, not memory bandwidth, bounds concurrency on this host, and placement never changes results."
+  },
+  "resource_profiling": {
+    "classification": "operational",
+    "workloads": [
+      "force_single_point",
+      "ml_neb_band"
+    ],
+    "process_grid": [
+      1,
+      2,
+      4,
+      6,
+      8,
+      12,
+      16
+    ],
+    "thread_grid": [
+      1,
+      2,
+      4,
+      8,
+      16
+    ],
+    "evaluations": {
+      "force_single_point": 3,
+      "ml_neb_band": 3
+    },
+    "warmup": 1,
+    "ml_neb_interior_images": 5,
+    "timeout_seconds": 3600
+  },
+  "stages": [
+    {
+      "name": "runtime_audit",
+      "public_name": "PREFLIGHT: runtime identity",
+      "adapter": "runtime_audit",
+      "implementation_status": "implemented",
+      "depends_on": [],
+      "outcome_access": [],
+      "workloads": [],
+      "description": "ASE/FIRE/NEB identity and frozen-settings acceptance audit in every frozen model runtime (no data, no model)."
+    },
+    {
+      "name": "resource_profile",
+      "public_name": "PREFLIGHT: resource profiling",
+      "adapter": "resource_profile",
+      "implementation_status": "implemented",
+      "depends_on": [],
+      "outcome_access": [],
+      "workloads": [],
+      "description": "Measured worker memory and process x thread throughput per model for force single points and the ML-NEB band, on geometry-only structures."
+    },
+    {
+      "name": "gate1_population_audit",
+      "public_name": "PREFLIGHT: Gate-1 structural populations",
+      "adapter": "gate1_population_audit",
+      "implementation_status": "implemented",
+      "depends_on": [],
+      "outcome_access": [],
+      "workloads": [],
+      "description": "Outcome-free structural bookkeeping at d = 3 (evidence for open items rate_limiting_hop_algorithm and prospective_gate1_rule): unique normalized chemical systems of the rate-limiting hops in nebDFT2k, one structure per system, published-split classes. Upper bounds, never a population manifest."
+    },
+    {
+      "name": "bvse_reproduction",
+      "public_name": "PREFLIGHT: BVSE/ions reproduction",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "runtime_audit"
+      ],
+      "outcome_access": [],
+      "workloads": [],
+      "description": "Frozen BVSE initial-path generator and its reproduction of nebDFT2k _init.xyz.",
+      "next_task": "Inspect the ions package on aiserver, pin its version (open items ions_bvse_version_pin, bvse_reproduction), and implement an outcome-free audit that regenerates the BVSE path (Decorator, collect_bvse_params(Li,+1), Percolator(upper_bound=8.0), mincut_maxdim(tr=0.5), superedge(8.0).interpolate(n_images=5)) for every nebDFT2k calibration hop and compares it with <edge_id>_init.xyz (atom count/order identical, cell within 1e-4 A, positions within 0.01 A); report the reproduction rate and decorator failures separately."
+    },
+    {
+      "name": "descriptor_availability",
+      "public_name": "PREFLIGHT: descriptor availability",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [],
+      "outcome_access": [],
+      "workloads": [],
+      "description": "Source-field availability of the label-free descriptor set.",
+      "next_task": "data-engineer server audit (open item descriptor_availability): for every feature in amendments.prospective.support_gate.descriptor_space and configs/descriptor_fallback_manifest.json, record the source field and the per-population missing/finite counts on the G0-audited nebDFT2k, nebBVSE122k and BVEL13k schemas (table R_descriptor_availability). Report no feature value."
+    },
+    {
+      "name": "development_population",
+      "public_name": "PREFLIGHT: development manifest",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "gate1_population_audit"
+      ],
+      "outcome_access": [],
+      "workloads": [],
+      "description": "Hashed development population (identifiers only).",
+      "next_task": "Build the development manifest (open item development_manifest): published-test chemical systems with nebDFT2k hops, spanning systems excluded, Gate 0 (TM/Hubbard-U plus the nebDFT2k element criteria, which must first be written down as code), one structure per system by structure_rule, its h*_3 if that hop is a nebDFT2k hop; hash it into amendments.prospective.development_manifest_sha256 before any development outcome."
+    },
+    {
+      "name": "development_ml_neb",
+      "public_name": "PREFLIGHT: development ML-NEB bands",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "bvse_reproduction",
+        "development_population",
+        "resource_profile",
+        "runtime_audit"
+      ],
+      "outcome_access": [],
+      "workloads": [
+        [
+          "each_model",
+          "ml_neb_band"
+        ]
+      ],
+      "description": "Converged ML-NEB bands of the development population; geometry source for the path representation.",
+      "next_task": "Shard development hops x models with e3sse.execution (one shard per hop and model) and run e3sse.barriers.ml_neb.run_ml_neb in each model's frozen runtime on the frozen BVSE paths. Use the per-model dtype from amendments.prospective.ml_neb.runtime_requirements.dtype (ml_neb.frozen_model_dtype) and the run-pinned thread count, and pass the provenance block. Store band geometries and classified failures, and run the 20-hop reproducibility subset and the LiTraj-exact development-only sensitivity. Outcome-free: no DFT barrier is read."
+    },
+    {
+      "name": "path_representation",
+      "public_name": "PREFLIGHT: path representation freeze",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "development_ml_neb",
+        "descriptor_availability"
+      ],
+      "outcome_access": [],
+      "workloads": [
+        [
+          "each_model",
+          "embedding_inference"
+        ]
+      ],
+      "description": "Per-model path-level representation and its label-free acceptance.",
+      "next_task": "Extract the pinned per-image migrating-Li embeddings on the development bands, build z_path by amendments.representation.path_representation.mapping_rule, evaluate the four acceptance criteria (including the LOCSO k-NN CV >= 0.05 and tau_d bootstrap CV <= 0.10 degeneracy checks) and record per model which branch applies (open item path_representation_mapping)."
+    },
+    {
+      "name": "preflight",
+      "public_name": "PREFLIGHT",
+      "adapter": "preflight",
+      "implementation_status": "implemented",
+      "depends_on": [
+        "runtime_audit",
+        "resource_profile",
+        "gate1_population_audit",
+        "bvse_reproduction",
+        "descriptor_availability",
+        "development_population",
+        "development_ml_neb",
+        "path_representation"
+      ],
+      "outcome_access": [],
+      "workloads": [
+        [
+          "each_model",
+          "force_single_point"
+        ],
+        [
+          "each_model",
+          "ml_neb_band"
+        ]
+      ],
+      "description": "Aggregate every blocking outcome-free evidence item (Git, data hashes, Gate 1, embeddings, checkpoints, locks, runtimes, ASE/NEB audits, resource profiles, protocol open items, output safety)."
+    },
+    {
+      "name": "freeze",
+      "public_name": "INTERNAL SCIENTIFIC FREEZE",
+      "adapter": "freeze",
+      "implementation_status": "implemented",
+      "depends_on": [
+        "preflight"
+      ],
+      "outcome_access": [],
+      "workloads": [],
+      "description": "Materialize (or bind) the frozen internal-freeze protocol from the reviewed clean commit; grants outcome access to later stages."
+    },
+    {
+      "name": "estimate",
+      "public_name": "ESTIMATE / CALIBRATION",
+      "adapter": "estimate",
+      "implementation_status": "implemented",
+      "depends_on": [
+        "freeze"
+      ],
+      "outcome_access": [
+        "mplitrj_published_train_dft_forces_energies"
+      ],
+      "workloads": [
+        [
+          "each_model",
+          "force_single_point"
+        ],
+        [
+          "statistics",
+          "statistics_numpy"
+        ]
+      ],
+      "description": "Study-1 softening estimates (Eq. 17), cluster bootstrap, label budget, diagnostics, tables and figures for all six frozen models."
+    },
+    {
+      "name": "family_scale",
+      "public_name": "ESTIMATE: prospective family scale",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "freeze"
+      ],
+      "outcome_access": [
+        "mplitrj_train_systems_without_nebdft2k_forces"
+      ],
+      "workloads": [
+        [
+          "each_model",
+          "force_single_point"
+        ]
+      ],
+      "description": "Family softening scales for the deployed predictor.",
+      "next_task": "Compute the pooled family-scope s (amendments.prospective.s_scope: MPLiTrj frames of training-side chemical systems without nebDFT2k hops) once per model with the Study-1 sufficient-statistics code, and publish it as a hashed artifact that model selection, deployment calibration and discovery read; no later stage reads these forces directly."
+    },
+    {
+      "name": "transfer",
+      "public_name": "UNSEEN-KINETICS TRANSFER",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "estimate"
+      ],
+      "outcome_access": [
+        "mplitrj_published_train_dft_forces_energies",
+        "mplitrj_test_side_nonpath_forces",
+        "mplitrj_own_path_forces_oracle",
+        "nebdft2k_fixed_geometry_evaluation_barriers"
+      ],
+      "workloads": [
+        [
+          "each_model",
+          "force_single_point"
+        ]
+      ],
+      "description": "Raw and SRT-corrected fixed-geometry barriers, paired effects and the P1 endpoint.",
+      "next_task": "Implement the Study-2a runner: fixed-geometry single points of every frozen model on the DFT-NEB images of the evaluation hops (sharded by model x hop), material-scope s from leakage-eligible non-path frames (test-side non-path forces), methods B0-B4 and the B6 oracle (labelled, never primary) per amendments.transfer_benchmark via e3sse.barriers.fixed_geometry, the deployment-gate thresholds, element-resolved SRT, label_budget_downstream and the explicit G1 decision file; B5 runs in linear_recalibration_comparator after model selection."
+    },
+    {
+      "name": "reliability",
+      "public_name": "RELIABILITY (correct or abstain)",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "transfer"
+      ],
+      "outcome_access": [
+        "nebdft2k_fixed_geometry_evaluation_barriers"
+      ],
+      "workloads": [
+        [
+          "statistics",
+          "statistics_numpy"
+        ]
+      ],
+      "description": "Risk-coverage, AURC and correct-or-abstain behaviour of the pre-outcome diagnostics.",
+      "next_task": "Drive e3sse.softening.applicability and e3sse.selection.selective_prediction over the transfer records: rho_F and the other frozen scores, risk-coverage, AURC with the analytic random baseline, both framings, the chemical-system cluster bootstrap and the P4/H6 Holm family."
+    },
+    {
+      "name": "weight_slice_ml_neb",
+      "public_name": "MODEL SELECTION: weight-fit slice ML-NEB",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "freeze",
+        "development_ml_neb"
+      ],
+      "outcome_access": [],
+      "workloads": [
+        [
+          "each_model",
+          "ml_neb_band"
+        ]
+      ],
+      "description": "Per-model ML-NEB on the frozen held-out weight-fit slices.",
+      "next_task": "Blocked by open item weight_slice_definition_order: once the frozen P and Q weight-fit slices are defined before per-model convergence, run every model's ML-NEB on the slice units (outcome-free), giving the independent support coverage that model selection needs and the converged slices that density_ratio fits on."
+    },
+    {
+      "name": "model_selection",
+      "public_name": "MODEL SELECTION",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "reliability",
+        "transfer",
+        "path_representation",
+        "family_scale",
+        "weight_slice_ml_neb"
+      ],
+      "outcome_access": [
+        "nebdft2k_development_barriers"
+      ],
+      "workloads": [
+        [
+          "statistics",
+          "statistics_numpy"
+        ]
+      ],
+      "description": "Frozen development-set selection of the deployed model.",
+      "next_task": "Score the complete deployed predictor on the per-system rate-limiting development hops with e3sse.screening.prospective_contract.select_prospective_model (coverage on the label-free Q weight-fit slice, G1 decision from transfer); access development barriers only through the pinned development manifest; never report the winner's development MAE as a performance estimate."
+    },
+    {
+      "name": "deployment_calibration",
+      "public_name": "DEPLOYMENT-FAITHFUL CALIBRATION",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "model_selection"
+      ],
+      "outcome_access": [],
+      "workloads": [
+        [
+          "each_model",
+          "ml_neb_band"
+        ]
+      ],
+      "description": "Calibration-side ML-NEB with the deployed predictor (no label read).",
+      "next_task": "Run e3sse.barriers.ml_neb.run_ml_neb (selected model, frozen BVSE paths, frozen dtype, run-pinned threads) on every conformal-calibration hop excluding the weight-fit slice, apply the support gate and family SRT, and record converged/failed (classified, never retried) and supported/abstained units, plus relaxed_path_comparison. Outcome-free (draw -> run -> drop): calibration labels are read only in discovery_selection."
+    },
+    {
+      "name": "linear_recalibration_comparator",
+      "public_name": "TRANSFER: B5 linear recalibration comparator",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "model_selection",
+        "transfer"
+      ],
+      "outcome_access": [
+        "nebdft2k_conformal_calibration_barriers",
+        "nebdft2k_fixed_geometry_evaluation_barriers"
+      ],
+      "workloads": [
+        [
+          "statistics",
+          "statistics_numpy"
+        ]
+      ],
+      "description": "Label-using comparator, kept after model selection.",
+      "next_task": "Fit B5 (amendments.transfer_benchmark.methods.B5_linear_recalibration) on the training-partition barriers and evaluate it on the transfer hops. It runs after model selection because those barriers belong to the conformal-calibration systems."
+    },
+    {
+      "name": "controlled_selection",
+      "public_name": "RISK-CONTROLLED SELECTION (Study 4)",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "model_selection"
+      ],
+      "outcome_access": [
+        "mplitrj_published_train_dft_forces_energies",
+        "mplitrj_test_side_nonpath_forces",
+        "nebdft2k_repeated_partition_barriers"
+      ],
+      "workloads": [
+        [
+          "statistics",
+          "statistics_numpy"
+        ]
+      ],
+      "description": "Retrospective conformal FDR validity and power.",
+      "next_task": "Run the Study-4 retrospective conformal validity and power analysis under every unchanged parent study_4_contract rule (draws, seeds, alpha, c, MC s.e., the parent deterministic tie break, BH with BY sensitivity) with the added SRT_gated_correct_or_raw predictor (amendments.selection)."
+    },
+    {
+      "name": "density_ratio",
+      "public_name": "PROSPECTIVE: covariate-shift weights",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "weight_slice_ml_neb",
+        "model_selection"
+      ],
+      "outcome_access": [],
+      "workloads": [
+        [
+          "statistics",
+          "statistics_numpy"
+        ]
+      ],
+      "description": "Density-ratio weights for weighted conformal selection.",
+      "next_task": "Fit the L2-regularized logistic domain classifier (e3sse.selection.density_ratio, IRLS, no clipping) on the converged held-out P and Q slices of the selected model; report AUC, ESS, max weight, overlap and the share of never-selectable units. Label-free."
+    },
+    {
+      "name": "discovery",
+      "public_name": "PROSPECTIVE DISCOVERY: pool ML-NEB",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "model_selection",
+        "bvse_reproduction"
+      ],
+      "outcome_access": [],
+      "workloads": [
+        [
+          "each_model",
+          "ml_neb_band"
+        ]
+      ],
+      "description": "Prospective pool predictions.",
+      "next_task": "BVEL13k -> normalized chemical systems -> one structure per system -> d = 3 rate-limiting hop -> frozen BVSE path -> ML-NEB (selected model, frozen dtype, run-pinned threads) -> support gate -> raw/SRT prediction; record the funnel with e3sse.screening.prospective_contract.funnel, keeping ML-NEB failure and support abstention separate. No label exists or is read."
+    },
+    {
+      "name": "discovery_selection",
+      "public_name": "PROSPECTIVE DISCOVERY: weighted conformal selection",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "deployment_calibration",
+        "discovery",
+        "density_ratio",
+        "controlled_selection"
+      ],
+      "outcome_access": [
+        "nebdft2k_conformal_calibration_barriers"
+      ],
+      "workloads": [
+        [
+          "statistics",
+          "statistics_numpy"
+        ]
+      ],
+      "description": "Controlled prospective selection and candidate evidence.",
+      "next_task": "Weighted conformalized selection (e3sse.selection.conformal.weighted_conformalized_selection, published focal weight w_j, lexicographic (score, tie_key) with the SHA-256 tie key, deterministic conservative sensitivity) on the predictor-eligible population, then the candidate evidence package. Candidates are screening results with approximate FDR control, not confirmed superionic conductors."
+    },
+    {
+      "name": "publication",
+      "public_name": "PUBLICATION BUILD",
+      "adapter": "missing_runner",
+      "implementation_status": "missing_runner",
+      "depends_on": [
+        "estimate",
+        "transfer",
+        "reliability",
+        "model_selection",
+        "deployment_calibration",
+        "linear_recalibration_comparator",
+        "controlled_selection",
+        "density_ratio",
+        "discovery_selection"
+      ],
+      "outcome_access": [],
+      "workloads": [],
+      "description": "Registered publication figures and tables with provenance.",
+      "next_task": "Build every registered figure/table of configs/figure_registry.json and configs/table_registry.json from the derived tables only (Seaborn + Matplotlib object-oriented API via e3sse.figures.publication_style.export_figure: PDF + 600-dpi PNG + provenance JSON). The ESTIMATE figures already exist (built inside the estimate stage)."
+    }
+  ]
+}

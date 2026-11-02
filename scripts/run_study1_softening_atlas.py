@@ -292,6 +292,7 @@ def _runtime_environment(ctx: Context, name: str) -> dict[str, str]:
     _, record = inputs.model_runtime(ctx.protocol, name)
     env = dict(os.environ)
     env["PYTHONPATH"] = str(REPOSITORY / "src")
+    env["PYTHONNOUSERSITE"] = "1"  # model packages only from the frozen runtime
     env.update(record.get("environment_variables", {}))
     return env
 
@@ -500,7 +501,8 @@ def command_runtime_infer(ctx: Context, args: argparse.Namespace) -> int:
     error, statistics = None, {}
     shards_started = time.perf_counter()
     try:
-        result = execute_shards(run, shards, plan, resume=args.resume)
+        result = execute_shards(run, shards, plan, resume=args.resume,
+                                memory_floor_bytes=int(args.memory_reserve_gib * GIB))
     except Exception as exc:  # recorded in the run manifest, then re-raised
         error, result = exc, None
     shard_wall = time.perf_counter() - shards_started

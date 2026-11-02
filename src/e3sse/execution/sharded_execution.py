@@ -314,8 +314,16 @@ def execute_shards(
     resume: bool = False,
     executor: str = "process",
     progress: Callable[[str], None] = lambda message: print(message, file=sys.stderr),
+    memory_floor_bytes: int | None = None,
+    available_memory: Callable[[], int | None] | None = None,
 ) -> ShardedExecutionResult:
-    """Run every shard once under ``plan``; see the module docstring for the contract."""
+    """Run every shard once under ``plan``; see the module docstring for the contract.
+
+    ``memory_floor_bytes``: while MemAvailable is below it, no further shard is
+    submitted until in-flight shards finish (one shard always proceeds, so the run
+    cannot stall).  Operational only: it changes when shards start, never what they
+    compute.
+    """
 
     if executor not in {"process", "in_process"}:
         raise ValueError("executor must be 'process' or 'in_process'")
@@ -346,8 +354,12 @@ def execute_shards(
         raise ValueError("scientific_identity must include code_sha256, or git_sha with "
                          "git_dirty false")
 
+    if memory_floor_bytes is not None and memory_floor_bytes < 0:
+        raise ValueError("memory_floor_bytes must be non-negative")
+    probe = available_memory or _mem_available_bytes
     with _exclusive_run_lock(output_dir):
-        return _execute_locked(run, ordered, plan, output_dir, resume, executor, progress)
+        return _execute_locked(run, ordered, plan, output_dir, resume, executor, progress,
+                               memory_floor_bytes, probe)
 
 
 def _execute_locked(
@@ -358,6 +370,8 @@ def _execute_locked(
     resume: bool,
     executor: str,
     progress: Callable[[str], None],
+    memory_floor_bytes: int | None = None,
+    available_memory: Callable[[], int | None] = lambda: None,
 ) -> ShardedExecutionResult:
     ids = [shard.shard_id for shard in ordered]
     started = _utc_now()
@@ -412,6 +426,14 @@ def _execute_locked(
         timings[shard.shard_id] = round(elapsed, 3)
 
     max_in_flight_observed = 0
+    memory_throttle_events = 0
+
+    def memory_tight() -> bool:
+        if memory_floor_bytes is None:
+            return False
+        available = available_memory()
+        return available is not None and available < memory_floor_bytes
+
     with child_thread_environment(plan.threads_per_worker) as environment:
         if executor == "in_process":
             _initialize_worker(
@@ -446,6 +468,10 @@ def _execute_locked(
                 broken = False
                 while True:
                     while not broken and len(in_flight) < plan.max_in_flight:
+                        if in_flight and memory_tight():
+                            # Wait for completions rather than push the host into swap/OOM.
+                            memory_throttle_events += 1
+                            break
                         shard = next(queue, None)
                         if shard is None:
                             break
@@ -510,6 +536,8 @@ def _execute_locked(
         "numa_strategy": NUMA_STRATEGY,
         "tmpdir": os.environ.get("TMPDIR"),
         "max_observed_in_flight": max_in_flight_observed,
+        "memory_floor_bytes": memory_floor_bytes,
+        "memory_throttle_events": memory_throttle_events,
         "shard_counts": {
             "requested": len(ids),
             "reused": len(reused),
@@ -526,6 +554,7 @@ def _execute_locked(
             "per_worker_memory_bytes",
             "host",
             "numa_strategy",
+            "memory_floor_bytes",
             "timestamps",
         ],
     }
@@ -545,6 +574,16 @@ def _execute_locked(
         computed=tuple(sorted(computed)),
         max_observed_in_flight=max_in_flight_observed,
     )
+
+
+def _mem_available_bytes(meminfo: Path = Path("/proc/meminfo")) -> int | None:
+    try:
+        for line in meminfo.read_text(encoding="ascii").splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
 
 
 def require_thread_environment_at_start(threads_per_worker: int) -> None:
