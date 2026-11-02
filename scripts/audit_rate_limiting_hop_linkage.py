@@ -12,7 +12,7 @@ Canonical bindings only, no new paths:
 
 Per dataset, exactly one CSV with the required columns is read.  Only these columns
 are extracted: BVEL13k ``material_id``, ``chemsys``; nebBVSE122k ``material_id``,
-``edge_id``, ``chemsys``, ``em_bvse`` (BVSE covariate); nebDFT2k ``material_id``,
+``edge_id``, ``chemsys``, ``em`` (BVSE covariate); nebDFT2k ``material_id``,
 ``edge_id``, ``chemsys``.  A forbidden-column list asserts that no DFT outcome column
 is ever extracted.  Chemical systems are normalised by the frozen normaliser.  A
 material with any unparseable, prefix-mismatched or conflicting row is ineligible as
@@ -38,10 +38,11 @@ from e3sse.screening.rate_limiting_hop import parse_edge_id, rate_limiting_hop
 AUDIT_SCHEMA = "e3sse.rate-limiting-hop-linkage-audit"
 REQUIRED = {
     "BVEL13k": ("material_id", "chemsys"),
-    "nebBVSE122k": ("material_id", "edge_id", "chemsys", "em_bvse"),
+    "nebBVSE122k": ("material_id", "edge_id", "chemsys", "em"),
     "nebDFT2k": ("material_id", "edge_id", "chemsys"),
 }
-FORBIDDEN_COLUMNS = frozenset({"em_dft", "em", "barrier", "e_dft"})
+NEBBVSE_BARRIER_FIELD = "bvse_migration_barrier_eV"
+FORBIDDEN_COLUMNS = frozenset({"em_dft", "barrier", "e_dft"})
 DIMENSIONS = (1, 2, 3)
 CODE_FILES = ("scripts/audit_rate_limiting_hop_linkage.py",
               "src/e3sse/screening/rate_limiting_hop.py")
@@ -91,6 +92,20 @@ def read_columns(path: Path, wanted: tuple[str, ...]) -> tuple[list[dict[str, st
     return rows, short
 
 
+def adapt_nebbvse_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Map nebBVSE122k's cryptic raw ``em`` field to its semantic internal name."""
+
+    return [
+        {
+            "material_id": row["material_id"],
+            "edge_id": row["edge_id"],
+            "chemsys": row["chemsys"],
+            NEBBVSE_BARRIER_FIELD: row["em"],
+        }
+        for row in rows
+    ]
+
+
 def verify_against_g0(path: Path, digest: str, g0_inputs: dict) -> None:
     identities = [item for items in g0_inputs.values() if isinstance(items, list)
                   for item in items if isinstance(item, dict)]
@@ -116,7 +131,7 @@ def audit(raw_root: Path, g0_inputs: dict) -> dict:
         digest = _sha256(path)
         verify_against_g0(path, digest, g0_inputs)
         rows, short = read_columns(path, columns)
-        tables[dataset] = rows
+        tables[dataset] = adapt_nebbvse_rows(rows) if dataset == "nebBVSE122k" else rows
         provenance[dataset] = {"path": str(path), "sha256": digest, "rows": len(rows),
                                "short_rows_skipped": short, "columns_read": list(columns)}
     outcome_columns_read = any(set(p["columns_read"]) & FORBIDDEN_COLUMNS
@@ -130,7 +145,7 @@ def audit(raw_root: Path, g0_inputs: dict) -> dict:
         material, edge = row["material_id"], row["edge_id"]
         try:
             parsed = parse_edge_id(edge)
-            barrier = float(row["em_bvse"])
+            barrier = float(row[NEBBVSE_BARRIER_FIELD])
         except ValueError:
             ambiguous.setdefault(material, "unparseable_edge_or_barrier")
             continue
