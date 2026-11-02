@@ -3,9 +3,11 @@
 Every setting comes from the active protocol
 (``amendments.prospective.ml_neb.frozen_numeric_settings``); no ASE default defines
 the method.  The NEB algorithm (``method``), climbing image, spring constant, FIRE
-parameters, force thresholds and step budgets are passed explicitly, because ASE's
-own NEB default changed from ``aseneb`` to ``improvedtangent`` in ASE 3.28.0 and the
-frozen model runtimes pin different ASE releases.
+parameters, force thresholds and step budgets are passed explicitly.  ASE's NEB
+docstring marks the default change from ``aseneb`` to ``improvedtangent`` as
+``versionchanged:: 3.27.1``; no 3.27.1 release exists (GitLab tags, PyPI), 3.27.0 still
+defaults to ``aseneb`` and 3.28.0 is the first released code with the new default.
+The frozen runtimes pin ASE 3.22.1 and 3.24.0, so nothing may rely on a default.
 
 Procedure (LiTraj c3ca5c2 with the two declared deviations):
 
@@ -25,8 +27,8 @@ operating-system errors are infrastructure failures and are re-raised, never sto
 as a scientific result.  Wall-clock timeouts are handled by the caller.
 
 This module runs inside the frozen model runtimes (Python 3.11, ASE 3.22-3.24), so
-it uses only APIs present in all of them and imports ASE lazily.  The protocol's
-one-ASE-version requirement is checked by the production preflight, not assumed here.
+it uses only APIs present in all of them and imports ASE lazily.  Per-runtime ASE versions are
+retained (owner decision); preflight requires cross-runtime EMT equivalence.
 """
 
 from __future__ import annotations

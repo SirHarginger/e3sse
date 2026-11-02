@@ -81,8 +81,9 @@ def test_checked_in_config_is_internal_freeze_and_blocked_until_reviews():
     # Remaining blockers are server evidence or recorded owner decisions, never local work.
     assert all(i["blocking"] is False or i["blocker_class"] in ("server_evidence", "owner_decision")
                for i in config["open_items"])
-    assert {"p_population_split_membership", "weight_slice_definition_order",
-            "ase_single_version"} <= set(internal_freeze_blockers(config))
+    # Owner decisions of 2026-11-02 are recorded as resolved protocol rules.
+    assert not {"p_population_split_membership", "weight_slice_definition_order",
+                "ase_single_version"} & set(internal_freeze_blockers(config))
     # The parent pins are the registration-gated historical identity used by Study 1.
     study1 = json.loads((REPOSITORY / "configs" / "study1_softening_atlas.json").read_text())
     assert config["parent_protocol"]["protocol_id"] == study1["frozen_protocol"]["protocol_id"]

@@ -164,9 +164,9 @@ def test_ml_neb_runtime_audits_require_one_ase_version(tmp_path):
         expected_settings_sha256=settings)}
     assert checks["ml_neb_runtime:env-a"].status == "passed"
     assert checks["ml_neb_runtime:env-c"].status == "missing_evidence"
-    single = checks["ml_neb_single_ase_version"]
-    assert single.status == "failed" and single.blocks == "freeze"
-    assert single.evidence["ase_versions"] == {"env-a": "3.22.1", "env-b": "3.24.0"}
+    equivalence = checks["ml_neb_cross_runtime_equivalence"]
+    assert equivalence.status == "failed" and equivalence.blocks == "freeze"  # 1e-7 eV apart
+    assert equivalence.evidence["ase_versions"] == {"env-a": "3.22.1", "env-b": "3.24.0"}
     stale = preflight.check_ml_neb_runtime_audits(tmp_path, ["env-a"],
                                                   expected_code_sha256={"f": "2"},
                                                   expected_settings_sha256=settings)

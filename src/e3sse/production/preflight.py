@@ -367,9 +367,9 @@ def check_runtimes(runtimes: Mapping[str, Any]) -> list[PreflightCheck]:
 def check_ml_neb_runtime_audits(audit_dir: Path, environments: Iterable[str], *,
                                 expected_code_sha256: Mapping[str, str],
                                 expected_settings_sha256: str) -> list[PreflightCheck]:
-    """Per-runtime ASE/FIRE/NEB audits, then the protocol's one-ASE-version rule."""
+    """Per-runtime ASE/FIRE/NEB audits, then cross-runtime equivalence on the reference."""
 
-    checks, versions, barriers = [], {}, {}
+    checks, versions, barriers, steps = [], {}, {}, {}
     for environment in sorted(set(environments)):
         check_id = f"ml_neb_runtime:{environment}"
         candidates = sorted(audit_dir.glob(f"{environment}-*.json")) if audit_dir.is_dir() else []
@@ -391,7 +391,9 @@ def check_ml_neb_runtime_audits(audit_dir: Path, environments: Iterable[str], *,
         path, report = current[-1]
         identity = report.get("identity", {})
         versions[environment] = identity.get("ase_version")
-        barriers[environment] = report.get("checks", {}).get("reference_neb", {}).get("barrier_eV")
+        reference = report.get("checks", {}).get("reference_neb", {})
+        barriers[environment] = reference.get("barrier_eV")
+        steps[environment] = reference.get("band_optimizer_steps")
         if not report.get("passed"):
             checks.append(_failed(check_id, "freeze", "runtime audit failed", path=str(path),
                                   runtime=report.get("runtime"),
@@ -402,21 +404,19 @@ def check_ml_neb_runtime_audits(audit_dir: Path, environments: Iterable[str], *,
                                   ase_version=versions[environment],
                                   reference_barrier_eV=barriers[environment]))
     if versions:
-        distinct = sorted({str(v) for v in versions.values()})
+        # Per-runtime ASE versions are retained (owner decision 2026-11-02); they must
+        # solve the EMT reference identically (status, steps, barrier within 1e-10 eV).
         finite = [b for b in barriers.values() if isinstance(b, float)]
         spread = max(finite) - min(finite) if len(finite) > 1 else 0.0
         evidence = {"ase_versions": dict(sorted(versions.items())),
-                    "reference_barrier_spread_eV": spread}
-        if len(distinct) != 1:
-            checks.append(_failed(
-                "ml_neb_single_ase_version", "freeze",
-                "protocol amendments.prospective.ml_neb.runtime_requirements.ase requires one "
-                f"pinned ASE version across all model runtimes; found {distinct}.  Resolve by an "
-                "owner decision (rebuild the runtimes on one ASE with new locks and smoke "
-                "reports, or amend the protocol); production never upgrades a package", **evidence))
+                    "reference_barrier_spread_eV": spread,
+                    "reference_band_steps": dict(sorted(steps.items()))}
+        if len(finite) != len(barriers) or spread > 1e-10 or len(set(steps.values())) > 1:
+            checks.append(_failed("ml_neb_cross_runtime_equivalence", "freeze",
+                                  "runtimes disagree on the EMT reference NEB", **evidence))
         else:
-            checks.append(_passed("ml_neb_single_ase_version", "freeze",
-                                  f"one ASE version {distinct[0]}", **evidence))
+            checks.append(_passed("ml_neb_cross_runtime_equivalence", "freeze",
+                                  "every runtime solves the EMT reference identically", **evidence))
     return checks
 
 

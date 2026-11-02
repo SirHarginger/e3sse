@@ -426,7 +426,7 @@
           "convergence_note": "FIRE stops on the per-atom force norm while the success check uses the component maximum; convergence counts differ from LiTraj's MACE run; a LiTraj-exact sensitivity runs on the development set only"
         },
         "runtime_requirements": {
-          "ase": "one pinned ASE version across all model runtimes (ase.neb vs ase.mep moved in 3.23)",
+          "ase": "per-model runtime ASE versions are retained as pinned in each frozen environment lock (owner decision 2026-11-02; no environment is rebuilt to force one version); every scientifically relevant NEB/FIRE option, including method=, is passed explicitly; the production runtime audit's EMT reference must agree across runtimes (same status and band step count, barrier within 1e-10 eV)",
           "fire_parameters": "maxstep, dt, a and downhill_check frozen explicitly, never ASE defaults",
           "calculators": "one calculator per image as in LiTraj (matgl may share one Potential across wrappers)",
           "device_threads": "CPU device and torch thread count fixed and recorded; a small subset is rerun to confirm reproducibility",
@@ -505,7 +505,7 @@
             "tolerance": "identical convergence status and barrier difference <= 1e-4 eV"
           },
           "versions": {
-            "ase": "SLOT: server runtime audit (LiTraj's ASE version is unrecoverable)",
+            "ase": "per runtime: the version pinned in its environment lock, recorded by the server runtime audit",
             "ions": "SLOT: server reproduction audit"
           }
         },
@@ -520,7 +520,7 @@
         "fit_population": "converged units only on both sides, after the frozen draw -> run -> drop order",
         "assumption": "dQ/dP(X, Y) depends on X only through the frozen descriptors; stated with every Study-5 result",
         "frozen_elements": "classifier, features, l2, convergence settings and clipping policy are frozen before fitting",
-        "population": "P and Q eligibility per amendments.prospective.populations; slices drawn after Gate 1 and ML-NEB convergence",
+        "population": "weight-fit slice membership is fixed before any per-model ML-NEB or outcome: it is decided on the Gate-1 structural units (development excluded) from the chemical-system identifier alone, never from barriers, predictions, errors, applicability scores, ML-NEB convergence or any downstream result; w_hat is then fitted on the slice units converged under the selected model (owner decision 2026-11-02)",
         "estimator": "L2-regularized logistic domain classifier fitted by IRLS (plain numpy, deterministic, no random initialization); unpenalized intercept; features standardized on the fitting sample; frozen l2; non-convergence means no weights (fail closed)",
         "diagnostics": [
           "out-of-sample domain AUC (calibration vs pool covariates, no outcomes) and in-sample AUC",
@@ -541,7 +541,7 @@
           "tolerance": 1e-10,
           "overlap_epsilon": 0.01,
           "holdout_fraction": 0.2,
-          "holdout_rule": "systems ranked by SHA256('e3sse.weight-holdout' NUL protocol_id NUL chemical_system); the lowest 20% of eligible_P and of eligible_Q systems form the weight-fit slices; membership depends on system IDs only"
+          "holdout_rule": "a P-side or Q-side Gate-1 system is in the weight-fit slice iff int(SHA256('e3sse.weight-holdout' NUL parent_protocol_id NUL chemical_system), 16) / 2^256 < holdout_fraction (0.2); the parent protocol ID is used because this protocol's own ID depends on this rule. P-slice systems are never conformal-calibration units; Q-slice systems are never in the selectable prospective population"
         },
         "claim": "estimated weights give approximate control only (Theorem 3.5); gamma is unobservable and may be unbounded under a misspecified logistic model, so no numerical bound is claimed; the FDR statement covers the non-held-out pool only"
       },
@@ -628,7 +628,7 @@
           "selected": "units selected by WCS"
         },
         "fdr_target_population": "FDR statements apply only to the conformal_predictor_eligible population on which WCS was run; the full attrition funnel (Gate 1 -> attempted -> converged -> supported -> eligible -> selected) is reported separately with explicit counts",
-        "P": "eligible_P(system) = system in the partition universe with nebDFT2k hops AND not in the development set AND passes Gate 0 AND the structure chosen by structure_rule has a 3-D percolating network AND its rate-limiting hop h*_3 is a nebDFT2k hop (else ineligible and counted, never re-chosen) AND the frozen ML-NEB converges on h*_3 AND the regenerated BVSE path reproduces nebDFT2k _init.xyz within frozen tolerance (calibration-only filter, declared; pool units cannot be filtered this way)",
+        "P": "eligible_P(system) = published-train-only system (every membership record of the system has published_split 'train'; published-validation systems are excluded by the parent published_validation_split_role rule and systems spanning published splits are excluded) with nebDFT2k hops AND not in the development set AND passes Gate 0 AND the structure chosen by structure_rule has a 3-D percolating network AND its rate-limiting hop h*_3 is a nebDFT2k hop (else ineligible and counted, never re-chosen) AND the frozen ML-NEB converges on h*_3 AND the regenerated BVSE path reproduces nebDFT2k _init.xyz within frozen tolerance (calibration-only filter, declared; pool units cannot be filtered this way). Owner decision 2026-11-02.",
         "Q": "eligible_Q(system) = BVEL13k system outside the partition universe and the development set AND passes Gate 0 AND the structure chosen by structure_rule has a 3-D percolating network AND the frozen ML-NEB converges on h*_3",
         "structure_rule": "within a chemical system, the structure with the lowest critical BVSE barrier E*_3, ties by ascending material_id (covariate-only, identical for P and Q)",
         "dimension_d": "d = 3, fixed by scientific reasoning before any count or outcome (macroscopic polycrystalline conduction needs a 3-D percolating network; LiTraj targets 3-D percolation); d = 1 is a descriptive sensitivity count only",
@@ -1030,21 +1030,36 @@
     },
     {
       "id": "p_population_split_membership",
-      "blocking": true,
+      "blocking": false,
       "blocker_class": "owner_decision",
-      "required_resolution": "reconcile amendments.prospective.populations.P (literal: partition-universe systems with nebDFT2k hops not in development) with calibration_set (published-train hops) and the parent published_validation_split_role rule (validation systems excluded from Study 5). Statistical-validator recommendation (2026-11-02): P = published-train-only systems. Validation systems are excluded by the parent rule. Systems spanning published splits are excluded, because their published-test hops enter the Study-2a evaluation (and the G1 switch) that informs the deployed predictor. Spanning-in-P may be kept only as a labelled sensitivity. The structural audit already reports these classes separately; record the decision before any count is inspected."
+      "required_resolution": "reconcile amendments.prospective.populations.P (literal: partition-universe systems with nebDFT2k hops not in development) with calibration_set (published-train hops) and the parent published_validation_split_role rule (validation systems excluded from Study 5). Statistical-validator recommendation (2026-11-02): P = published-train-only systems. Validation systems are excluded by the parent rule. Systems spanning published splits are excluded, because their published-test hops enter the Study-2a evaluation (and the G1 switch) that informs the deployed predictor. Spanning-in-P may be kept only as a labelled sensitivity. The structural audit already reports these classes separately; record the decision before any count is inspected.",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.populations.P",
+        "evidence": "owner decision 2026-11-02: P = published-train systems only; validation-split and spanning systems excluded"
+      }
     },
     {
       "id": "weight_slice_definition_order",
-      "blocking": true,
+      "blocking": false,
       "blocker_class": "owner_decision",
-      "required_resolution": "density_ratio.population says the weight-fit slices are drawn after Gate 1 and ML-NEB convergence, but eligible_Q requires convergence under the selected model, while model_selection_objective.feasibility needs every model's support coverage on the Q weight-fit slice before selection (circular). Proposed (statistical-validator, research-architect 2026-11-02): define the P and Q slices by a frozen SHA-256 threshold on Gate-1 chemical-system identifiers before any ML-NEB; run each model's ML-NEB on the slice units (outcome-free); fit w_hat on the units converged under the selected model. Also fix that deployment calibration reads no slice-system label."
+      "required_resolution": "density_ratio.population says the weight-fit slices are drawn after Gate 1 and ML-NEB convergence, but eligible_Q requires convergence under the selected model, while model_selection_objective.feasibility needs every model's support coverage on the Q weight-fit slice before selection (circular). Proposed (statistical-validator, research-architect 2026-11-02): define the P and Q slices by a frozen SHA-256 threshold on Gate-1 chemical-system identifiers before any ML-NEB; run each model's ML-NEB on the slice units (outcome-free); fit w_hat on the units converged under the selected model. Also fix that deployment calibration reads no slice-system label.",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.density_ratio.population and settings.holdout_rule",
+        "evidence": "owner decision 2026-11-02: identity-only slice membership fixed before any per-model ML-NEB; existing frozen holdout_fraction 0.2 retained"
+      }
     },
     {
       "id": "ase_single_version",
-      "blocking": true,
+      "blocking": false,
       "blocker_class": "owner_decision",
-      "required_resolution": "runtime_requirements.ase requires one pinned ASE version across all model runtimes, but the frozen runtimes pin ASE 3.22.1 (e3sse-chgnet-0.3.0) and 3.24.0 (e3sse-matgl-1.2.7); the other locks are server evidence. Either rebuild the ML-NEB runtimes on one ASE (new locks and smoke reports; changes model runtime identity), or amend the rule to per-runtime pinned ASE with every NEB/FIRE setting explicit and the production runtime audit's EMT reference agreeing across runtimes (same status and step counts, barrier within 1e-10 eV). Local evidence: the frozen engine on ASE 3.22.1, 3.24.0 and 3.29.0 gives 23 band steps and reference barriers equal to 1.2e-13 eV. Record the decision before any ML-NEB run."
+      "required_resolution": "runtime_requirements.ase requires one pinned ASE version across all model runtimes, but the frozen runtimes pin ASE 3.22.1 (e3sse-chgnet-0.3.0) and 3.24.0 (e3sse-matgl-1.2.7); the other locks are server evidence. Either rebuild the ML-NEB runtimes on one ASE (new locks and smoke reports; changes model runtime identity), or amend the rule to per-runtime pinned ASE with every NEB/FIRE setting explicit and the production runtime audit's EMT reference agreeing across runtimes (same status and step counts, barrier within 1e-10 eV). Local evidence: the frozen engine on ASE 3.22.1, 3.24.0 and 3.29.0 gives 23 band steps and reference barriers equal to 1.2e-13 eV. Record the decision before any ML-NEB run.",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.ml_neb.runtime_requirements.ase",
+        "evidence": "owner decision 2026-11-02: per-runtime ASE retained with explicit settings and cross-runtime EMT equivalence (local evidence: ASE 3.22.1, 3.24.0, 3.29.0 give 23 band steps, barriers equal to 1.2e-13 eV)"
+      }
     }
   ],
   "declared_scope_revisions": [
