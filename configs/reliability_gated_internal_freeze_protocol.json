@@ -615,7 +615,21 @@
       "id": "embedding_extraction_verification",
       "blocking": true,
       "required_resolution": "read-only probe in every pinned runtime: module, layer, dimension, determinism; record per model or mark latent support unavailable",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "recorded_model_dispositions": {
+        "M3GNet-MP-2021.2.8-PES": {
+          "capture": "model.graph_layers.2:output[1]",
+          "capture_mode": "pinned_module (frozen; not replaced)",
+          "probe_result": "passed finite, deterministic, A-B-A, translation, rotation, atom-level and environment-sensitivity checks; failed permutation consistency on the 96-atom rattled 2x2x2 Li2O supercell",
+          "latent_support_status": "rejected_permutation_consistency",
+          "applicability_branch": "descriptor_space (amendments.prospective.support_gate.fallback_hierarchy; subject to descriptor_availability)",
+          "alternative_capture_search": "not performed: no other M3GNet-MP capture is searched for (project owner instruction 2026-11-02)",
+          "runtime_and_checkpoint": "unchanged: matgl 1.2.7 runtime and the SHA-verified M3GNet-MP-2021.2.8-PES checkpoint are not modified to make the check pass",
+          "acceptance_rules": "unchanged (representation.embedding_capability.REQUIRED_CHECKS)",
+          "probe_implementation": "pre-change pinned path (all-module hooks, pinned key selected afterwards); it captures the same tensor as the single-module pinned capture (tests/test_embedding_capability.py)",
+          "evidence": "per-model probe report on the production server; its path and SHA-256 are bound when the merged embedding_capability_manifest is pinned (not yet bound)"
+        }
+      }
     },
     {
       "id": "ml_neb_settings",

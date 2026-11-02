@@ -9,8 +9,10 @@ Run on the server with the model's own environment (as for the smoke tests), e.g
 
 then merge the per-model reports with ``--merge`` from the project environment.
 Inputs are synthetic Li2O structures only; no dataset, label or outcome is read.
-``--pinned-module`` verifies one module chosen by the mlip-specialist for a model
-without a documented API; without it such models report candidates only.
+``--pinned-module`` verifies one capture chosen by the mlip-specialist for a model
+without a documented API; without it such models report candidates only.  In pinned
+mode only that module is hooked and only that tensor is kept (no candidate
+enumeration), so memory stays near a plain forward pass.
 """
 
 from __future__ import annotations
@@ -29,10 +31,12 @@ from e3sse.representation.embedding_capability import (
     array_checks,
     capability_status,
     capture_module_outputs,
+    capture_pinned_output,
     checks_pass,
     failed_checks,
     hook_candidates,
     merge_manifest,
+    parse_pinned_capture,
     permutation,
     permuted,
     probe_structures,
@@ -104,13 +108,19 @@ def probe(model: dict, checkpoint: Path, pinned_module: str | None) -> dict:
         "structure_pooling_rule": STRUCTURE_POOLING_RULE,
         "inputs": "synthetic antifluorite Li2O cell and rattled 2x2x2 supercell (seed 2026); "
                   "each also rotated, translated+wrapped and permuted; A-B-A state check",
-        "memory_note": "peak RSS includes all-module hook storage; it overstates production",
+        "capture_mode": "documented_api" if adapter in DOCUMENTED_APIS
+                        else "pinned_module" if pinned_module is not None else "discovery",
+        "memory_note": "peak RSS includes all-module hook storage; it overstates production"
+                       if adapter not in DOCUMENTED_APIS and pinned_module is None
+                       else "peak RSS of documented-API or single-module pinned capture",
     }
     error, location, pinned_ok = None, None, None
     structure_checks, candidates = [], []
     try:
         if installed != model["package_version"]:
             raise RuntimeError(f"installed {installed} != registry {model['package_version']}")
+        if pinned_module is not None and adapter not in DOCUMENTED_APIS:
+            parse_pinned_capture(pinned_module)  # fail closed before loading the model
         calc = build_calculator(model, checkpoint, device="cpu")
         module = _torch_module(calc, adapter)
         parameters = list(module.parameters()) if hasattr(module, "parameters") else []
@@ -127,6 +137,8 @@ def probe(model: dict, checkpoint: Path, pinned_module: str | None) -> dict:
                 copy = structure.copy()
                 copy.calc = calc
                 return copy.get_potential_energy()
+            if pinned_module is not None:
+                return capture_pinned_output(module, pinned_module, call)
             return capture_module_outputs(module, call)
 
         for index, atoms in enumerate(structures):
@@ -142,15 +154,15 @@ def probe(model: dict, checkpoint: Path, pinned_module: str | None) -> dict:
             key = "documented" if adapter in DOCUMENTED_APIS else pinned_module
             if adapter in DOCUMENTED_APIS:
                 location = DOCUMENTED_APIS[adapter]
-            else:
+            elif pinned_module is None:
                 candidates = hook_candidates(first, n)
-                if pinned_module is not None:
-                    location = f"captured tensor {pinned_module!r}"
-                    if pinned_module not in first:
-                        raise RuntimeError(f"pinned capture {pinned_module!r} produced no output")
-                    module_name = pinned_module.split(":")[0]
-                    if first["__calls__"].get(module_name) != 1:
-                        raise RuntimeError(f"pinned module {module_name!r} must run exactly once")
+            else:
+                location = f"captured tensor {pinned_module!r}"
+                if pinned_module not in first:
+                    raise RuntimeError(f"pinned capture {pinned_module!r} produced no output")
+                module_name = pinned_module.split(":")[0]
+                if first["__calls__"].get(module_name) != 1:
+                    raise RuntimeError(f"pinned module {module_name!r} must run exactly once")
             checks = {}
             if key is not None:
                 checks = array_checks(

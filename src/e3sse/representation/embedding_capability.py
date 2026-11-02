@@ -20,6 +20,8 @@ probe does not modify, retrain or wrap the model; forward hooks only observe out
 
 from __future__ import annotations
 
+import ast
+import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -36,12 +38,35 @@ DOCUMENTED_APIS = {
 STRUCTURE_POOLING_RULE = "mean over atoms (structure level); migrating-Li row (hop level)"
 
 
+# Antifluorite Li2O (Fm-3m) conventional cell, given explicitly so the fixture does not
+# depend on the installed ASE crystal builder (``ase.build.bulk("OLi2", "fluorite",
+# cubic=True)`` fails under ase 3.22.1, the CHGNet runtime).  Lattice parameter in
+# Angstrom; fractional coordinates and atom order reproduce that builder's output under
+# ase 3.29: O at the fcc sites, each followed by its two Li at +-(1/4, 1/4, 1/4).
+LI2O_LATTICE_PARAMETER_A = 4.61
+LI2O_SYMBOLS = ("O", "Li", "Li") * 4
+LI2O_FRACTIONAL_POSITIONS = (
+    (0.00, 0.00, 0.00), (0.25, 0.25, 0.25), (0.75, 0.75, 0.75),
+    (0.00, 0.50, 0.50), (0.25, 0.75, 0.75), (0.75, 0.25, 0.25),
+    (0.50, 0.00, 0.50), (0.75, 0.25, 0.75), (0.25, 0.75, 0.25),
+    (0.50, 0.50, 0.00), (0.75, 0.75, 0.25), (0.25, 0.25, 0.75),
+)
+
+
+def li2o_cell() -> Any:
+    """The 12-atom periodic antifluorite Li2O conventional cell (cubic, a = 4.61 A)."""
+
+    from ase import Atoms
+
+    lattice = LI2O_LATTICE_PARAMETER_A * np.eye(3)
+    return Atoms(symbols=list(LI2O_SYMBOLS), scaled_positions=LI2O_FRACTIONAL_POSITIONS,
+                 cell=lattice, pbc=True)
+
+
 def probe_structures() -> list[Any]:
     """Antifluorite Li2O conventional cell and a 2x2x2 supercell rattled with a fixed seed."""
 
-    from ase.build import bulk
-
-    cell = bulk("OLi2", "fluorite", a=4.61, cubic=True)
+    cell = li2o_cell()
     rattled = cell.repeat((2, 2, 2))
     rattled.rattle(stdev=0.05, seed=2026)
     return [cell, rattled]
@@ -224,6 +249,113 @@ def capture_module_outputs(torch_module: Any, run: Callable[[], Any]) -> dict[st
             handle.remove()
     outputs["__calls__"] = calls
     return outputs
+
+
+_CAPTURE = re.compile(r"(?P<module>[^:]+):(?P<kind>input|output)(?P<path>(?:\[[^\]]+\])*)")
+_PATH_TOKEN = re.compile(r"\[(\d+|'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")\]")
+
+
+def parse_pinned_capture(capture: str) -> tuple[str, str, tuple[int | str, ...]]:
+    """Split a discovery capture name into (module, ``input``/``output``, index path).
+
+    The grammar is exactly the naming of :func:`capture_module_outputs`, for example
+    ``graph_layers.2:output[1]`` or ``block:output[1]['x']``.  Anything else fails closed.
+    """
+
+    match = _CAPTURE.fullmatch(capture) if isinstance(capture, str) else None
+    if match is None:
+        raise ValueError(f"invalid pinned capture {capture!r}; expected '<module>:output[...]'")
+    path, consumed = [], 0
+    for token in _PATH_TOKEN.finditer(match["path"]):
+        if token.start() != consumed:
+            break
+        consumed = token.end()
+        text = token.group(1)
+        try:
+            path.append(int(text) if text.isdigit() else ast.literal_eval(text))
+        except (SyntaxError, ValueError):
+            raise ValueError(f"invalid index path in pinned capture {capture!r}") from None
+    canonical = f"{match['module']}:{match['kind']}" + "".join(
+        f"[{step}]" if isinstance(step, int) else f"[{step!r}]" for step in path)
+    if consumed != len(match["path"]) or canonical != capture:
+        raise ValueError(f"invalid index path in pinned capture {capture!r}")
+    return match["module"], match["kind"], tuple(path)
+
+
+def _select_tensor(value: Any, path: Sequence[int | str], capture: str) -> Any:
+    """The one tensor at ``path``, navigated exactly as :func:`_tensors` names it."""
+
+    import torch
+
+    for step in path:
+        if isinstance(step, int) and isinstance(value, (tuple, list)) and step < len(value):
+            value = value[step]
+        elif (isinstance(step, str) and not isinstance(value, (torch.Tensor, tuple, list))
+              and hasattr(value, "keys") and callable(value.keys)
+              and step in set(map(str, value.keys()))):
+            try:
+                value = value[step]
+            except (KeyError, TypeError, IndexError):
+                raise RuntimeError(f"pinned capture {capture!r}: index {step!r} not found") \
+                    from None
+        else:
+            raise RuntimeError(f"pinned capture {capture!r}: index {step!r} not found")
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().clone().numpy()
+    raise RuntimeError(f"pinned capture {capture!r} is not a tensor")
+
+
+def capture_pinned_output(torch_module: Any, capture: str, run: Callable[[], Any]) -> dict[str, Any]:
+    """Run once observing only the pinned module; keep only the pinned tensor.
+
+    Hooks go on that module alone: a forward hook that counts calls and, for an
+    output capture, clones the selected tensor; for an input capture a pre-hook clones
+    it before the module runs (as in :func:`capture_module_outputs`).  The result has
+    the discovery layout ``{capture: array, "__calls__": {module: count}}``.  An
+    unknown module, an unresolvable index path, a non-tensor value, or a call count
+    other than exactly one raises (fail closed).  The caller must reset the
+    calculator so the forward pass really runs.
+    """
+
+    name, kind, path = parse_pinned_capture(capture)
+    modules = dict(torch_module.named_modules())
+    if name not in modules:  # the root ("") is never a discovery capture
+        raise RuntimeError(f"pinned module {name!r} not found in the model")
+    module = modules[name]
+    captured: dict[str, Any] = {}
+    calls = [0]
+    errors: list[str] = []
+
+    def take(value: Any) -> None:
+        try:
+            captured[capture] = _select_tensor(value, path, capture)
+        except RuntimeError as exc:
+            errors.append(str(exc))
+
+    def pre_hook(_module, inputs):
+        take(tuple(inputs))
+
+    def post_hook(_module, _inputs, output):
+        calls[0] += 1
+        if kind == "output":
+            take(output)
+
+    handles = []
+    try:
+        handles.append(module.register_forward_hook(post_hook))
+        if kind == "input":
+            handles.append(module.register_forward_pre_hook(pre_hook))
+        run()
+    finally:
+        for handle in handles:
+            handle.remove()
+    if errors:
+        raise RuntimeError(errors[0])
+    if calls[0] != 1:
+        raise RuntimeError(f"pinned module {name!r} must run exactly once (ran {calls[0]})")
+    if capture not in captured:
+        raise RuntimeError(f"pinned capture {capture!r} produced no output")
+    return {capture: captured[capture], "__calls__": {name: calls[0]}}
 
 
 def capability_status(*, documented: bool, pinned_ok: bool | None, n_candidates: int,
