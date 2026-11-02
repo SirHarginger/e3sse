@@ -70,10 +70,19 @@ def test_checked_in_config_is_internal_freeze_and_blocked_until_reviews():
     assert governance["preregistration_claimed"] is False
     # Engineering checkpoint rule: no blocking local item; the freeze still needs server evidence.
     assert local_engineering_blockers(config) == []
-    assert {"embedding_probe_server_run", "rate_limiting_hop_algorithm", "bvse_reproduction",
-            "descriptor_availability"} <= set(internal_freeze_blockers(config))
-    assert all(i["blocking"] is False or i["blocker_class"] == "server_evidence"
+    assert {"rate_limiting_hop_algorithm", "bvse_reproduction", "descriptor_availability",
+            "path_representation_mapping", "development_manifest"} <= set(
+        internal_freeze_blockers(config))
+    # Embedding evidence is pinned (path + SHA-256), so its probe items no longer block.
+    pins = config["amendments"]["representation"]["embedding_capability_evidence"]["reports"]
+    assert len(pins) == 6 and all(len(pin["sha256"]) == 64 for pin in pins.values())
+    assert not {"embedding_probe_server_run", "embedding_extraction_verification",
+                "applicability_fallback_hierarchy"} & set(internal_freeze_blockers(config))
+    # Remaining blockers are server evidence or recorded owner decisions, never local work.
+    assert all(i["blocking"] is False or i["blocker_class"] in ("server_evidence", "owner_decision")
                for i in config["open_items"])
+    assert {"p_population_split_membership", "weight_slice_definition_order",
+            "ase_single_version"} <= set(internal_freeze_blockers(config))
     # The parent pins are the registration-gated historical identity used by Study 1.
     study1 = json.loads((REPOSITORY / "configs" / "study1_softening_atlas.json").read_text())
     assert config["parent_protocol"]["protocol_id"] == study1["frozen_protocol"]["protocol_id"]

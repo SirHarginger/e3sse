@@ -446,7 +446,12 @@ def test_m3gnet_mp_disposition_is_recorded_as_permutation_rejection():
     assert record["capture"] == "model.graph_layers.2:output[1]"
     assert record["latent_support_status"] == "rejected_permutation_consistency"
     assert record["applicability_branch"].startswith("descriptor_space")
-    assert item["blocking"] is True  # the other models are still pending
+    # Resolved by the six pinned authoritative reports; M3GNet-MP stays latent-rejected.
+    assert item["blocking"] is False and item["resolution"]["status"] == "resolved"
+    pin = config["amendments"]["representation"]["embedding_capability_evidence"]["reports"][
+        "M3GNet-MP-2021.2.8-PES"]
+    assert pin["latent_support_status"] == "rejected_permutation_consistency"
+    assert pin["applicability_branch"].startswith("descriptor_space")
     # A synthetic report with exactly that failure can never enter latent support.
     passed = {"atom_level": True, "finite": True, "deterministic": True,
               "rotation_invariant": True, "translation_invariant": True,

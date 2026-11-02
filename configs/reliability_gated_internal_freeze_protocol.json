@@ -258,7 +258,62 @@
           "label-free degeneracy check on the development population: coefficient of variation of leave-one-chemical-system-out k-NN distances >= 0.05, and tau_d bootstrap (1000 system resamples) coefficient of variation <= 0.10; otherwise the descriptor fallback applies"
         ]
       },
-      "failed_neb": "no converged band -> no path representation -> no prediction; BVSE-path features are never substituted"
+      "failed_neb": "no converged band -> no path representation -> no prediction; BVSE-path features are never substituted",
+      "embedding_capability_evidence": {
+        "classification": "server evidence: authoritative per-model embedding-capability reports, pinned by the project owner on 2026-11-02 before any outcome; no further capture search is performed",
+        "verification": "production preflight re-hashes every pinned file and checks that its canonical_name, its usability under representation.embedding_capability.merge_manifest and this pin agree; any mismatch blocks the freeze",
+        "reports": {
+          "CHGNet-0.3.0": {
+            "path": "/srv/ben/e3sse/outputs/embedding_capability_completion/CHGNet-0.3.0.json",
+            "sha256": "1cd87606492061a25e74ebb32320ae52b5aa41f31cb1179b6a1d5effce7c6674",
+            "latent_support_status": "validated",
+            "capture_method": "documented_api",
+            "representation": "64-D atom features",
+            "applicability_branch": "latent_support"
+          },
+          "MACE-MP-0-small-2023-12-10": {
+            "path": "/srv/ben/e3sse/outputs/embedding_capability/MACE-MP-0-small-2023-12-10.json",
+            "sha256": "839d3d3ced66d11730aa63fdfc9ba2827b7ff75ce0996ef92b62e3fd431194d1",
+            "latent_support_status": "validated",
+            "capture_method": "documented_api",
+            "representation": "256-D invariant atom descriptor",
+            "applicability_branch": "latent_support"
+          },
+          "M3GNet-MP-2021.2.8-PES": {
+            "path": "/srv/ben/e3sse/outputs/embedding_capability_targeted/M3GNet-MP-2021.2.8-PES.json",
+            "sha256": "ee8e0f458a5aa25e8bed1286601a4a89fb431fd6ae3d7eeccaaf2a998e84db53",
+            "latent_support_status": "rejected_permutation_consistency",
+            "capture_method": "pinned_module",
+            "representation": "model.graph_layers.2:output[1] (frozen rejected capture; not used for support)",
+            "applicability_branch": "descriptor_space (subject to open item descriptor_availability; otherwise reliability-gated prospective SRT unavailable for this model)"
+          },
+          "M3GNet-MatPES-PBE-v2025.1-PES": {
+            "path": "/srv/ben/e3sse/outputs/embedding_capability_targeted/M3GNet-MatPES-PBE-v2025.1-PES.json",
+            "sha256": "6bf15bc014e778d2ad7eab3de20bf1110acb6780fe01afade42d175a9c46a604",
+            "latent_support_status": "validated",
+            "capture_method": "pinned_module",
+            "representation": "64-D final graph-state atom representation",
+            "applicability_branch": "latent_support"
+          },
+          "SevenNet-0-11July2024": {
+            "path": "/srv/ben/e3sse/outputs/embedding_capability_targeted/SevenNet-0-11July2024.json",
+            "sha256": "ce170e59e4c23c6402b0d6717bad68a075805263152b526f1581c24aa580bb1e",
+            "latent_support_status": "validated",
+            "capture_method": "pinned_module",
+            "representation": "reduce_input_to_hidden:output['x'] (64-D scalar atom representation)",
+            "applicability_branch": "latent_support"
+          },
+          "SevenNet-omat": {
+            "path": "/srv/ben/e3sse/outputs/embedding_capability_completion/SevenNet-omat.json",
+            "sha256": "b2fc5fb5a66562eefa579e304ecf1d31fc500708313ed2608f7c04617a73e7d9",
+            "latent_support_status": "validated",
+            "capture_method": "pinned_module",
+            "representation": "reduce_input_to_hidden:output['x'] (64-D scalar atom representation)",
+            "applicability_branch": "latent_support"
+          }
+        },
+        "not_pinned": "the earlier CHGNet-0.3.0 report written with the broken probe fixture is superseded by the embedding_capability_completion report and is not evidence"
+      }
     },
     "selection": {
       "classification": "task_specified; extends parent study_4_contract",
@@ -613,7 +668,7 @@
   "open_items": [
     {
       "id": "embedding_extraction_verification",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "read-only probe in every pinned runtime: module, layer, dimension, determinism; record per model or mark latent support unavailable",
       "blocker_class": "server_evidence",
       "recorded_model_dispositions": {
@@ -627,8 +682,13 @@
           "runtime_and_checkpoint": "unchanged: matgl 1.2.7 runtime and the SHA-verified M3GNet-MP-2021.2.8-PES checkpoint are not modified to make the check pass",
           "acceptance_rules": "unchanged (representation.embedding_capability.REQUIRED_CHECKS)",
           "probe_implementation": "pre-change pinned path (all-module hooks, pinned key selected afterwards); it captures the same tensor as the single-module pinned capture (tests/test_embedding_capability.py)",
-          "evidence": "per-model probe report on the production server; its path and SHA-256 are bound when the merged embedding_capability_manifest is pinned (not yet bound)"
+          "evidence": "pinned in amendments.representation.embedding_capability_evidence.reports (embedding_capability_targeted/M3GNet-MP-2021.2.8-PES.json)"
         }
+      },
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.representation.embedding_capability_evidence",
+        "evidence": "six authoritative per-model reports pinned by path and SHA-256 (owner, 2026-11-02): five validated latent representations; M3GNet-MP-2021.2.8-PES latent support rejected (permutation consistency); preflight re-hashes them"
       }
     },
     {
@@ -808,9 +868,14 @@
     },
     {
       "id": "applicability_fallback_hierarchy",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "record which hierarchy branch applies per model from embedding_capability_manifest (rule itself is closed locally)",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.representation.embedding_capability_evidence.reports[*].applicability_branch",
+        "evidence": "provisional atom-level branch: latent support for CHGNet-0.3.0, MACE-MP-0-small-2023-12-10, M3GNet-MatPES-PBE-v2025.1-PES, SevenNet-0-11July2024 and SevenNet-omat; descriptor-space branch for M3GNet-MP-2021.2.8-PES, conditional on the still-blocking descriptor_availability item. The final per-model branch is fixed by path_representation_mapping, whose label-free degeneracy check can still move a model to the descriptor fallback. The per-report pins replace the merged embedding_capability_manifest.json named in the fallback hierarchy text (declared substitute)"
+      }
     },
     {
       "id": "representation_geometry_source",
@@ -869,9 +934,14 @@
     },
     {
       "id": "embedding_probe_server_run",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "run scripts/probe_embedding_capability.py in every pinned runtime, pin hook captures where a documented API is absent, merge embedding_capability_manifest.json",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.representation.embedding_capability_evidence",
+        "evidence": "six authoritative per-model reports pinned by path and SHA-256 (owner, 2026-11-02): five validated latent representations; M3GNet-MP-2021.2.8-PES latent support rejected (permutation consistency); preflight re-hashes them"
+      }
     },
     {
       "id": "path_representation_mapping",
@@ -887,9 +957,14 @@
     },
     {
       "id": "server_unreachable",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "aiserver (192.168.200.62) was unreachable from the development machine (port 22 timeout; wired link down); every server audit is pending network access",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "server access restored",
+        "evidence": "owner-reported server validation on aiserver at commit c70a8e486b485c34a78da0c9cd87a3fb3792e87f (tree 5fc687e5882d3a5c15b902d5a6d5d9f61dd13a9f): 419 passed, 8 skipped, ruff, syntax, semantic naming and Git data-safety checks passed; the server audits (G0, Gate-1 linkage, embedding probes) have since run there"
+      }
     },
     {
       "id": "published_eq6_confirmation",
@@ -952,6 +1027,24 @@
       "blocking": true,
       "required_resolution": "build and pin development_manifest_sha256 from the server linkage audit before any development outcome",
       "blocker_class": "server_evidence"
+    },
+    {
+      "id": "p_population_split_membership",
+      "blocking": true,
+      "blocker_class": "owner_decision",
+      "required_resolution": "reconcile amendments.prospective.populations.P (literal: partition-universe systems with nebDFT2k hops not in development) with calibration_set (published-train hops) and the parent published_validation_split_role rule (validation systems excluded from Study 5). Statistical-validator recommendation (2026-11-02): P = published-train-only systems. Validation systems are excluded by the parent rule. Systems spanning published splits are excluded, because their published-test hops enter the Study-2a evaluation (and the G1 switch) that informs the deployed predictor. Spanning-in-P may be kept only as a labelled sensitivity. The structural audit already reports these classes separately; record the decision before any count is inspected."
+    },
+    {
+      "id": "weight_slice_definition_order",
+      "blocking": true,
+      "blocker_class": "owner_decision",
+      "required_resolution": "density_ratio.population says the weight-fit slices are drawn after Gate 1 and ML-NEB convergence, but eligible_Q requires convergence under the selected model, while model_selection_objective.feasibility needs every model's support coverage on the Q weight-fit slice before selection (circular). Proposed (statistical-validator, research-architect 2026-11-02): define the P and Q slices by a frozen SHA-256 threshold on Gate-1 chemical-system identifiers before any ML-NEB; run each model's ML-NEB on the slice units (outcome-free); fit w_hat on the units converged under the selected model. Also fix that deployment calibration reads no slice-system label."
+    },
+    {
+      "id": "ase_single_version",
+      "blocking": true,
+      "blocker_class": "owner_decision",
+      "required_resolution": "runtime_requirements.ase requires one pinned ASE version across all model runtimes, but the frozen runtimes pin ASE 3.22.1 (e3sse-chgnet-0.3.0) and 3.24.0 (e3sse-matgl-1.2.7); the other locks are server evidence. Either rebuild the ML-NEB runtimes on one ASE (new locks and smoke reports; changes model runtime identity), or amend the rule to per-runtime pinned ASE with every NEB/FIRE setting explicit and the production runtime audit's EMT reference agreeing across runtimes (same status and step counts, barrier within 1e-10 eV). Local evidence: the frozen engine on ASE 3.22.1, 3.24.0 and 3.29.0 gives 23 band steps and reference barriers equal to 1.2e-13 eV. Record the decision before any ML-NEB run."
     }
   ],
   "declared_scope_revisions": [
@@ -962,6 +1055,7 @@
   "blocker_classes": {
     "local_engineering": "must all be resolved with reviewer evidence before the engineering checkpoint commit",
     "server_evidence": "may remain open at the checkpoint commit; must be resolved before the internal scientific freeze",
-    "documentation": "non-blocking for both"
+    "documentation": "non-blocking for both",
+    "owner_decision": "a scientific decision the project owner must record (reviewed protocol edit) before the internal scientific freeze; may remain open at an engineering checkpoint; never chosen from counts or outcomes"
   }
 }

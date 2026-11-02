@@ -63,7 +63,7 @@ REQUIRED_AMENDMENTS = (
     "prospective",
 )
 MATERIALIZATION_MODES = ("production", "synthetic")
-BLOCKER_CLASSES = ("local_engineering", "server_evidence", "documentation")
+BLOCKER_CLASSES = ("local_engineering", "server_evidence", "owner_decision", "documentation")
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
