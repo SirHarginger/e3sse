@@ -89,16 +89,29 @@ def _audit_configs(tmp_path, *, tamper=False):
     return server, protocol
 
 
-def test_linkage_audit_uses_canonical_bindings_and_never_reads_outcomes(tmp_path):
+def test_linkage_audit_reads_canonical_raw_bvse_schema_and_adapts_barrier(tmp_path, monkeypatch):
     import json
 
     module = _audit_module()
     server, protocol = _audit_configs(tmp_path)
+    received_hops = []
+    original_rate_limiting_hop = module.rate_limiting_hop
+
+    def capture_hops(hops, dimension):
+        hops = list(hops)
+        received_hops.extend(hops)
+        return original_rate_limiting_hop(hops, dimension)
+
+    monkeypatch.setattr(module, "rate_limiting_hop", capture_hops)
     args = ["--config", str(server), "--protocol-config", str(protocol)]
     assert module.main(args) == 0
     out = tmp_path / "outputs" / "gate1_linkage" / "rate_limiting_hop_linkage_audit.json"
     report = json.loads(out.read_text())
     assert report["outcome_columns_read"] is False
+    assert report["inputs"]["nebBVSE122k"]["columns_read"] == [
+        "material_id", "edge_id", "chemsys", "em"
+    ]
+    assert {hop["em"] for hop in received_hops} == {0.4}
     assert "em_dft" not in report["inputs"]["nebDFT2k"]["columns_read"]
     pool = report["pool"]
     assert pool["linked"] + pool["unlinked"] == pool["total_candidate_structures"]
