@@ -537,7 +537,7 @@
       "note": "ions 0.4.1 is the release matching LiTraj c3ca5c2 notebooks/bvse_neb.ipynb (exact API; reproduces its Li3PO4 example); build this runtime from its own lock (ions 0.4.1 also needs PyYAML, which it does not declare); the reproduction audit against nebDFT2k _init.xyz confirms or refutes the pin (open items ions_bvse_version_pin, bvse_reproduction); environment_lock pins the runtime's requirements-style lock (name==version lines): the runner verifies its SHA-256 and every installed version of ions, ase, numpy, scipy, spglib, pymatgen, networkx and PyYAML against it",
       "environment_lock": {
         "path": "~/.venvs/e3sse-ions-0.4.1/requirements.lock",
-        "sha256": "server_evidence_pending"
+        "sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a"
       }
     },
     "transfer": {
