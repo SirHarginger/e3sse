@@ -16,7 +16,9 @@ fraction; counts only).
 from __future__ import annotations
 
 import math
+import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from e3sse.production.runners.context import (
@@ -24,6 +26,7 @@ from e3sse.production.runners.context import (
     RunnerContext,
     RunnerValidationError,
     canonical_sha256,
+    file_sha256,
 )
 from e3sse.production.runners.gate1_tables import linkage_tables, pinned_g0_inputs
 from e3sse.production.runners.structures import StructureSource, hop_length
@@ -40,7 +43,7 @@ def unit_key(unit: dict[str, Any]) -> str:
 def gate1_units(ctx: RunnerContext) -> list[dict[str, Any]]:
     audit = ctx.upstream("gate1_population_audit", "gate1_structural_population_audit")
     if audit.get("outcome_columns_read") is not False or audit.get("dimension") != 3:
-        raise ValueError("the Gate-1 structural audit is not an outcome-free d = 3 audit")
+        raise RunnerValidationError("the Gate-1 structural audit is not an outcome-free d = 3 audit")
     return list(audit["units"])
 
 
@@ -57,11 +60,16 @@ def unit_descriptors(units, *, structures: StructureSource, bvse: dict[str, floa
             length, reason = hop_length(atoms, parse_edge_id(unit["unit_edge_id"])), None
         except (RunnerValidationError, ValueError, IndexError) as exc:
             length, reason = None, f"hop_length: {exc}"
-        vector = descriptor_vector(atoms.get_chemical_symbols(),
-                                   cell_volume_A3=float(atoms.get_volume()),
-                                   hop_length_A=length, em_bvse_eV=bvse.get(unit["unit_edge_id"]))
+        try:
+            vector = descriptor_vector(atoms.get_chemical_symbols(),
+                                       cell_volume_A3=float(atoms.get_volume()),
+                                       hop_length_A=length,
+                                       em_bvse_eV=bvse.get(unit["unit_edge_id"]))
+        except (ValueError, KeyError) as exc:
+            vector = None
+            reason = "; ".join(r for r in (reason, f"descriptor: {exc}") if r)
         rows[key] = {**unit, "vector": vector, "missing_reason": reason,
-                     "elements": sorted(set(atoms.get_chemical_symbols()))}
+                     "structure_elements": sorted(set(atoms.get_chemical_symbols()))}
     return rows
 
 
@@ -74,8 +82,10 @@ def availability_table(rows: dict[str, Any]) -> list[dict[str, Any]]:
         for index, name in enumerate(DESCRIPTOR_NAMES):
             values = [None if m["vector"] is None else m["vector"][index] for m in members]
             finite = sum(v is not None and math.isfinite(v) for v in values)
+            not_li = sum("not Li in this structure" in (m.get("missing_reason") or "")
+                         for m in members)
             table.append({"feature": name, "population": side, "n_units": len(values),
-                          "n_missing": len(values) - finite,
+                          "n_missing": len(values) - finite, "n_edge_sites_not_li": not_li,
                           "finite_fraction": finite / len(values) if values else None})
     return table
 
@@ -89,13 +99,23 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
     bvse = {}
     for row in tables["nebBVSE122k"]:
         try:
-            bvse[row["edge_id"]] = float(row["bvse_migration_barrier_eV"])
+            value = float(row["bvse_migration_barrier_eV"])
         except ValueError:
             continue
+        if math.isfinite(value):  # nan/inf is missing, never a descriptor value
+            bvse[row["edge_id"]] = value
     rows = unit_descriptors(units, structures=structures, bvse=bvse)
     descriptors = {"schema": DESCRIPTOR_SCHEMA, "feature_names": list(DESCRIPTOR_NAMES),
                    "label_free": True, "units": rows,
                    "structure_source": structures.identity(),
+                   "table_provenance": tables["_provenance"],
+                   "g0_input_manifest_sha256": ctx.freeze_config["inputs"]["g0_input_manifest"][
+                       "sha256"],
+                   "code_sha256": {name: file_sha256(Path(module.__file__)) for name, module in
+                                   (("descriptors", sys.modules[__name__]),
+                                    ("structures", sys.modules[StructureSource.__module__]),
+                                    ("applicability_support",
+                                     sys.modules[descriptor_vector.__module__]))},
                    "units_sha256": canonical_sha256(sorted(rows))}
     table = availability_table(rows)
     outputs = {"descriptors": ctx.publish("descriptors.json", descriptors),
@@ -104,4 +124,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                                                        "rows": table})}
     complete = sum(r["vector"] is not None and all(v is not None for v in r["vector"])
                    for r in rows.values())
-    return {"outputs": outputs, "summary": {"units": len(rows), "complete_units": complete}}
+    edge_not_li = sum("not Li in this structure" in (r.get("missing_reason") or "")
+                      for r in rows.values())
+    return {"outputs": outputs, "summary": {"units": len(rows), "complete_units": complete,
+                                            "edge_sites_not_li": edge_not_li}}

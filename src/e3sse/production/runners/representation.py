@@ -20,10 +20,14 @@ distances) is fitted on the development population only.  Label-free.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
-from e3sse.production.runners.context import MissingEvidence, RunnerContext
+from e3sse.production.runners.context import (
+    MissingEvidence,
+    RunnerContext,
+    RunnerValidationError,
+    canonical_sha256,
+)
 
 SUPPORT_K = 5  # amendments.representation.support_metric (k = 5 nearest development units)
 LOCSO_CV_MIN = 0.05
@@ -67,14 +71,35 @@ def degeneracy(reference: dict[str, Any], seed: int) -> dict[str, Any]:
             taus.append(float(np.quantile(values, reference["quantile_level"], method="linear")))
     taus = np.asarray(taus)
     locso_cv = float(loo.std(ddof=0) / loo.mean()) if loo.mean() > 0 else 0.0
-    tau_cv = float(taus.std(ddof=0) / taus.mean()) if taus.mean() > 0 else math.inf
+    # Collapsed embeddings (every distance 0) leave the CV undefined: recorded as None
+    # with a reason and a failed check, never as a non-finite number.
+    tau_cv = float(taus.std(ddof=0) / taus.mean()) if taus.mean() > 0 else None
     return {"locso_cv": locso_cv, "locso_cv_min": LOCSO_CV_MIN,
             "tau_bootstrap_cv": tau_cv, "tau_bootstrap_cv_max": TAU_BOOTSTRAP_CV_MAX,
+            "tau_bootstrap_cv_undefined_reason": None if tau_cv is not None
+            else "tau_d bootstrap mean is zero (collapsed embeddings)",
             "tau_bootstrap_resamples": int(taus.size),
-            "passes": locso_cv >= LOCSO_CV_MIN and tau_cv <= TAU_BOOTSTRAP_CV_MAX,
+            "passes": locso_cv >= LOCSO_CV_MIN and tau_cv is not None
+            and tau_cv <= TAU_BOOTSTRAP_CV_MAX,
             "bootstrap_note": "systems resampled with replacement; tau_d* is the frozen quantile "
                               "of the resampled units' LOCSO distances (standardization held "
                               "fixed at the development fit)"}
+
+
+def frozen_path_representation(ctx: RunnerContext) -> dict[str, Any]:
+    """The pre-freeze path representation, accepted post-freeze only if it was built under
+    the frozen representation amendment and gate quantile (never a stale definition)."""
+
+    artifact = ctx.upstream("path_representation", "path_representation")
+    frozen = ctx.frozen_amendments()
+    expected = (canonical_sha256(frozen["representation"]),
+                float(frozen["deployment_gate"]["quantile_level"]), SUPPORT_K)
+    observed = (artifact.get("representation_amendment_sha256"),
+                artifact.get("quantile_level"), artifact.get("support_k"))
+    if observed != expected:
+        raise RunnerValidationError("path_representation was built under a representation "
+                                    "definition other than the frozen one")
+    return artifact
 
 
 def descriptor_reference(dev_keys: list[str], descriptors: dict[str, Any], quantile: float
@@ -167,6 +192,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
             environment_sensitive=sensitive)
     outputs = {"path_representation": ctx.publish("path_representation.json", {
         "support_k": SUPPORT_K, "quantile_level": quantile, "models": branches,
+        "representation_amendment_sha256": canonical_sha256(amendments["representation"]),
         "label_free": True})}
     return {"outputs": outputs,
             "summary": {model: b["branch"] for model, b in branches.items()}}

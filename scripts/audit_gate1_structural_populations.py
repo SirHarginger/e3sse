@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import subprocess
 import sys
@@ -44,17 +43,6 @@ CODE_FILES = ("scripts/audit_gate1_structural_populations.py",
               "src/e3sse/screening/rate_limiting_hop.py",
               "src/e3sse/protocol/partitions.py",
               "src/e3sse/softening/study1_inputs.py")
-
-
-def _linkage_audit_module():
-    """The executed linkage audit's own readers (G0 verification, forbidden columns)."""
-
-    path = REPOSITORY / "scripts" / "audit_rate_limiting_hop_linkage.py"
-    spec = importlib.util.spec_from_file_location("audit_rate_limiting_hop_linkage", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
 
 
 def _sha256(path: Path) -> str:
@@ -85,7 +73,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
 
-    linkage = _linkage_audit_module()
+    from e3sse.production.runners.gate1_tables import linkage_module
+
+    # The same module object linkage_tables uses, so its AuditError is the one caught.
+    linkage = linkage_module()
     config = load_config(args.config)  # rejects outputs under the data root
     data_root = Path(config["paths"]["data_root"])
     output_dir = ensure_safe_output_dir(

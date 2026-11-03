@@ -24,17 +24,22 @@ def test_funnel_uses_explicit_denominators_and_separates_failure_from_abstention
              _unit(failure="timeout", supported=False), _unit(attempted=False, supported=False)]
     result = funnel(units)
     assert result["counts"] == {"gate1": 7, "ml_neb_attempted": 6, "ml_neb_converged": 4,
-                                "applicability_supported": 3, "conformal_predictor_eligible": 4,
-                                "weight_fit_holdout": 1, "wcs_run": 3,
-                                "selected": 1, "failures_by_category": {
+                                "applicability_supported": 2, "conformal_predictor_eligible": 4,
+                                "weight_fit_holdout": 1, "no_density_weight": 0, "wcs_run": 3,
+                                "wcs_ran": True, "selected": 1, "failures_by_category": {
                                     "optimizer_non_convergence": 1, "calculator_exception": 0,
                                     "non_finite_value": 0, "geometry_validity": 0, "timeout": 1,
                                     "other_deterministic": 0}}
     assert result["rates"]["ml_neb_failure_rate"] == pytest.approx(2 / 6)
-    assert result["rates"]["applicability_coverage"] == pytest.approx(3 / 4)
+    # the hold-out unit is outside the coverage denominator (its support is never used)
+    assert result["rates"]["applicability_coverage"] == pytest.approx(2 / 3)
     assert result["rates"]["predictor_coverage"] == pytest.approx(4 / 7)
     assert result["rates"]["selection_rate"] == pytest.approx(1 / 3)
     assert result["fdr_population"] == "wcs_run"
+    # a converged unit without a density weight never enters WCS (no FDR statement covers it)
+    weighted = funnel([_unit(selected=True), {**_unit(), "weighted": False}])
+    assert weighted["counts"]["wcs_run"] == 1 and weighted["counts"]["no_density_weight"] == 1
+    assert funnel([_unit()], wcs_ran=False)["counts"]["wcs_run"] == 0
     with pytest.raises(ValueError, match="not attempted"):
         funnel([_unit(attempted=False, failure="timeout")])
     with pytest.raises(ValueError, match="WCS-run"):

@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 REQUIRED_PATHS = ("data_root", "outputs_root", "logs_root", "scratch_root")
 
 
@@ -27,6 +25,8 @@ def load_config(path: str | Path) -> dict[str, Any]:
         if config_path.suffix.lower() == ".json":
             config = json.load(handle)
         elif config_path.suffix.lower() in {".yaml", ".yml"}:
+            import yaml  # only YAML configs need PyYAML (frozen model runtimes may lack it)
+
             config = yaml.safe_load(handle)
         else:
             raise ValueError(f"Unsupported configuration format: {config_path.suffix}")

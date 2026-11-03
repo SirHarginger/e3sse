@@ -187,7 +187,8 @@
       "reporting": "realised coverage of the gate on every evaluated population; threshold accounting (n used, unsupported, undefined)",
       "threshold_access": "Study 2a: published-train non-path endpoint frames via require_outcome_access(purpose='threshold_selection'); Study 4: per-repeat symmetric thresholds are part of the pre-specified analysis under seal 2 (not a tuning purpose); Study 5: thresholds are computed from label-free representation or descriptor covariates and need no outcome access",
       "threshold_scale": "thresholds are computed on the rho_F (= sqrt(residual_fraction)) scale; quantiles are not invariant under sqrt",
-      "threshold_weighting_unit": "one diagnostic value per material (not per hop), so materials with many hops are not over-weighted"
+      "threshold_weighting_unit": "one diagnostic value per material (not per hop), so materials with many hops are not over-weighted",
+      "study4_validation_units": "per-repeat Study-4 thresholds use the force diagnostics of all calibration and test units of the repeat, which include published-validation systems (Study-4 units under published_validation_split_role); threshold_population.study_4 governs Study 4, and the parent phrase 'not for thresholds' is read as applying to the Study-2a and pilot thresholds (flagged for owner confirmation)"
     },
     "endpoints": {
       "classification": "engineering_choice pending statistical-validator review",
@@ -227,7 +228,9 @@
       "aggregation": "per hop: mean over draws of the absolute SRT error, then mean over hops; medians also reported because 1/s_K is heavy-tailed at small K",
       "uncertainty_nesting": "Monte Carlo draws nested inside the chemical-system cluster bootstrap",
       "stability_estimand": "RQ4 stability keeps the parent finite-population-corrected SD of s_K; |s_K - s_full| is an additional descriptive output",
-      "comparability_note": "test-side K frames are endpoint (low-energy) frames; results are not comparable to Deng et al.'s single high-energy structure"
+      "comparability_note": "test-side K frames are endpoint (low-energy) frames; results are not comparable to Deng et al.'s single high-energy structure",
+      "minimum_frames": 60,
+      "minimum_hops_count": 20
     },
     "representation": {
       "classification": "task_specified; extraction details pending mlip-specialist verification",
@@ -256,7 +259,14 @@
           "the migrating-Li index is preserved from the BVSE path through ML-NEB (atom order unchanged)",
           "the representation is environment-sensitive (probe check)",
           "label-free degeneracy check on the development population: coefficient of variation of leave-one-chemical-system-out k-NN distances >= 0.05, and tau_d bootstrap (1000 system resamples) coefficient of variation <= 0.10; otherwise the descriptor fallback applies"
-        ]
+        ],
+        "degeneracy_check": {
+          "support_k": 5,
+          "locso_cv_min": 0.05,
+          "tau_bootstrap_cv_max": 0.1,
+          "tau_bootstrap_resamples": 1000,
+          "undefined": "a non-finite CV (all LOCSO distances zero) fails the check"
+        }
       },
       "failed_neb": "no converged band -> no path representation -> no prediction; BVSE-path features are never substituted",
       "embedding_capability_evidence": {
@@ -423,7 +433,8 @@
           "neb_forces": "neb.get_forces() returns NEB-projected (spring + climbing) forces on interior images",
           "device": "LiTraj ran on CUDA; E3-SSE runs on CPU",
           "deviation_justification": "symmetric endpoints at fmax 0.1/100 steps and band fmax 0.1 match LiTraj's own DFT driver scripts/ase_run_vasp.py (L57-70, L87)",
-          "convergence_note": "FIRE stops on the per-atom force norm while the success check uses the component maximum; convergence counts differ from LiTraj's MACE run; a LiTraj-exact sensitivity runs on the development set only"
+          "convergence_note": "FIRE stops on the per-atom force norm while the success check uses the component maximum; convergence counts differ from LiTraj's MACE run; a LiTraj-exact sensitivity runs on the development set only",
+          "litraj_exact_source_endpoint_cap": "declared deviation of the development-only LiTraj-exact sensitivity: LiTraj's source-endpoint FIRE had no step limit; capped at 10000 steps so a production run cannot stall; units reaching the cap are counted (source_endpoint_cap_reached)"
         },
         "runtime_requirements": {
           "ase": "per-model runtime ASE versions are retained as pinned in each frozen environment lock (owner decision 2026-11-02; no environment is rebuilt to force one version); every scientifically relevant NEB/FIRE option, including method=, is passed explicitly; the production runtime audit's EMT reference must agree across runtimes (same status and band step count, barrier within 1e-10 eV)",
@@ -509,7 +520,29 @@
             "ions": "SLOT: server reproduction audit"
           }
         },
-        "runtime_audit_artifact": "per runtime: asserted ASE/ions/torch versions, FIRE and NEB settings above, thread count; produced on the server"
+        "runtime_audit_artifact": "per runtime: asserted ASE/ions/torch versions, FIRE and NEB settings above, thread count; produced on the server",
+        "bvse_recipe": {
+          "source": "LiTraj c3ca5c2 notebooks/bvse_neb.ipynb with every ions 0.4.1 SaddleFinder.bvse_neb default written out",
+          "mobile_symbol": "Li",
+          "mobile_charge": 1,
+          "superedge_cutoff_A": 8.0,
+          "n_images": 5,
+          "bvse_neb_options": {
+            "k": 2.0,
+            "default": true,
+            "distort": true,
+            "gm": false
+          },
+          "implied_neb": "default=True builds ase NEB(climb=False, k=2.0, method='improvedtangent')",
+          "distortion": "distort=True adds a seed-42 normal framework perturbation scaled to at most 0.2 A (zero on the mobile Li), identical for every image; kept in the paths handed to ML-NEB, as in the notebook; its maximum is recorded per unit",
+          "fire": {
+            "fmax": 0.1,
+            "steps": 100
+          },
+          "convergence": "recorded per unit (BVSE fmax <= fire.fmax); not an exclusion rule",
+          "pool_barrier_tolerance_eV": null,
+          "pool_barrier_check": "every unit's regenerated BVSE barrier is compared with the nebBVSE122k barrier of the same edge (label-free) and recorded; with pool_barrier_tolerance_eV null nothing is excluded; a tolerance is frozen only from the server reproduction audit (open item bvse_reproduction), never from outcomes"
+        }
       },
       "density_ratio": {
         "features": "the same label-free descriptor set as the descriptor fallback, but a separate quantity from the support score",
@@ -640,16 +673,20 @@
         "chemical_system_normaliser": "protocol.partitions.normalize_chemical_system, applied to every dataset's chemsys (BVEL13k systems recomputed from structure species where provided)",
         "structure_source": "one pristine host structure per material_id from the same source for development, calibration and pool units (never nebDFT2k vacancy supercells); source confirmed by the server descriptor-availability audit",
         "gate0": "transition-metal/Hubbard-U exclusion (frozen pymatgen-transition-metal-union-mp2020-u-v1) and the nebDFT2k element criteria, evaluated from composition alone, identically for all populations",
-        "development": "published-test chemical systems with nebDFT2k hops, spanning systems excluded, one structure per system by structure_rule, its h*_3 if that hop is a nebDFT2k hop; disjoint from P and Q",
+        "development": "published-test chemical systems with nebDFT2k hops, spanning systems excluded, one structure per system by structure_rule, its h*_3 if that hop is a nebDFT2k hop; disjoint from P and Q; units whose regenerated BVSE path does not reproduce nebDFT2k _init.xyz within the frozen tolerance are excluded from development ML-NEB and counted (declared filter, the same as for P; the hashed development manifest lists the pre-filter development set)",
         "nebDFT2k_inclusion_assumption": "treating h* in nebDFT2k as covariate shift assumes LiTraj's inclusion depended on the modelled BVSE/structural covariates and not on DFT NEB success; stated with every Study-5 result",
         "gate0_nebdft2k_criteria": {
-          "classification": "engineering_choice operationalizing parent study_5_contract.gate_0 ('same element and hop-length criteria as nebDFT2k'); covariate-only; pending statistical-validator and research-architect review",
-          "element_criterion": "every element of a Q chemical system occurs in at least one development or P chemical system (calibration-side element support)",
-          "hop_length_criterion": "the h*_3 hop length of a Q unit (descriptor hop_length_A from its pristine structure) lies within the closed range [min, max] of the development and P units' h*_3 hop lengths",
-          "missing": "a Q unit with an undefined hop length or unknown elements fails Gate 0 (fail closed) and is counted",
-          "applies_to": "Q only; development and P units are nebDFT2k hops by construction",
-          "implementation": "e3sse.production.runners.population.gate0_pool_decisions"
-        }
+          "classification": "engineering_choice operationalizing parent study_5_contract.gate_0 ('same element and hop-length criteria as nebDFT2k'); covariate-only; statistical-validator recommendation 2026-11-03; pending owner decision (open item gate0_reference_envelope)",
+          "reference_set": "development units and P weight-fit-slice units (identity-only SHA-256 slice rule), disjoint from every conformal-calibration unit and every Q unit",
+          "element_criterion": "every element of the unit's chemical system (the chemical_system key split on '-') occurs in at least one reference chemical system",
+          "hop_length_criterion": "the unit's h*_3 hop length (descriptor hop_length_A from its pristine structure) lies within the closed range [min, max] of the reference units' h*_3 hop lengths",
+          "missing": "a unit with an undefined hop length or unknown elements is excluded as missing covariate evidence (role excluded_missing_covariate), counted separately from Gate-0 failures (fail closed)",
+          "applies_to": "P calibration units and Q units identically (parent: 'identically for all populations'); development and P weight-fit-slice units define the reference",
+          "statistical_rationale": "the envelope never depends on a conformal-calibration or test covariate, so weighted exchangeability of calibration and test units (Theorem 3.1) and the independence of w_hat from calibration units (Theorem 3.5) are preserved",
+          "owner_alternative": "research-architect: LiTraj's own nebDFT2k construction criteria if recoverable, otherwise the envelope over all included nebDFT2k hops (all splits) as a declared deviation; that envelope includes calibration-unit covariates",
+          "implementation": "e3sse.production.runners.population.gate0_decisions"
+        },
+        "wcs_population": "converged, non-hold-out pool units with a density weight; a converged unit without a weight (missing descriptor) is counted as no_density_weight and is outside the FDR statement; weight-fit hold-out units are outside the applicability-coverage denominator"
       },
       "model_selection_objective": {
         "implementation": "e3sse.screening.prospective_contract.select_prospective_model",
@@ -821,7 +858,7 @@
     {
       "id": "ions_bvse_version_pin",
       "blocking": true,
-      "required_resolution": "pin the ions package version for BVSE initialization and verify its paths reproduce nebDFT2k _init.xyz for calibration hops",
+      "required_resolution": "pin the ions package version for BVSE initialization and verify its paths reproduce nebDFT2k _init.xyz for calibration hops; build the BVSE runtime from a lock and pin runners.bvse.environment_lock {path, sha256} (the runner verifies every package version against it)",
       "blocker_class": "server_evidence"
     },
     {
@@ -1021,7 +1058,7 @@
     {
       "id": "bvse_reproduction",
       "blocking": true,
-      "required_resolution": "ions version pin and ML-NEB-to-nebDFT2k path correspondence from the server reproduction audit",
+      "required_resolution": "ions version pin and ML-NEB-to-nebDFT2k path correspondence from the server reproduction audit; from the reproduction report (max position and BVSE-barrier difference distributions) decide whether to freeze ml_neb.bvse_recipe.pool_barrier_tolerance_eV",
       "blocker_class": "server_evidence"
     },
     {
@@ -1035,6 +1072,12 @@
       "blocking": true,
       "required_resolution": "build and pin development_manifest_sha256 from the server linkage audit before any development outcome",
       "blocker_class": "server_evidence"
+    },
+    {
+      "id": "gate0_reference_envelope",
+      "blocking": true,
+      "blocker_class": "owner_decision",
+      "required_resolution": "confirm the Gate-0 element and hop-length envelope (amendments.prospective.populations.gate0_nebdft2k_criteria). Statistical-validator: the earlier draft built it from development and all P units, including conformal-calibration units, which breaks weighted exchangeability; implemented default: development + P weight-fit-slice units, applied identically to P calibration and Q units. Research-architect alternative: LiTraj's own nebDFT2k construction criteria if recoverable, else the all-nebDFT2k envelope as a declared deviation. Record the decision before any count is inspected."
     },
     {
       "id": "p_population_split_membership",

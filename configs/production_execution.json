@@ -381,7 +381,9 @@
       "implementation_status": "implemented",
       "depends_on": [
         "model_selection",
-        "transfer"
+        "transfer",
+        "deployment_calibration",
+        "discovery"
       ],
       "outcome_access": [
         "nebdft2k_conformal_calibration_barriers",
@@ -403,7 +405,9 @@
       "depends_on": [
         "model_selection",
         "transfer",
-        "estimate"
+        "estimate",
+        "deployment_calibration",
+        "discovery"
       ],
       "outcome_access": [
         "mplitrj_published_train_dft_forces_energies",
@@ -428,7 +432,8 @@
         "model_selection",
         "bvse_reproduction",
         "family_scale",
-        "transfer"
+        "transfer",
+        "deployment_calibration"
       ],
       "outcome_access": [],
       "workloads": [
@@ -516,7 +521,11 @@
     "bvse": {
       "python": "~/.venvs/e3sse-ions-0.4.1/bin/python",
       "ions_version": "0.4.1",
-      "note": "ions 0.4.1 is the release matching LiTraj c3ca5c2 notebooks/bvse_neb.ipynb (exact API; reproduces its Li3PO4 example); build this runtime from its own lock (ions 0.4.1 also needs PyYAML, which it does not declare); the reproduction audit against nebDFT2k _init.xyz confirms or refutes the pin (open items ions_bvse_version_pin, bvse_reproduction)"
+      "note": "ions 0.4.1 is the release matching LiTraj c3ca5c2 notebooks/bvse_neb.ipynb (exact API; reproduces its Li3PO4 example); build this runtime from its own lock (ions 0.4.1 also needs PyYAML, which it does not declare); the reproduction audit against nebDFT2k _init.xyz confirms or refutes the pin (open items ions_bvse_version_pin, bvse_reproduction); environment_lock pins the runtime's requirements-style lock (name==version lines): the runner verifies its SHA-256 and every installed version of ions, ase, numpy, scipy, spglib, pymatgen, networkx and PyYAML against it",
+      "environment_lock": {
+        "path": "~/.venvs/e3sse-ions-0.4.1/requirements.lock",
+        "sha256": "server_evidence_pending"
+      }
     },
     "transfer": {
       "test_source_file": "MPLiTrj_test.xyz",

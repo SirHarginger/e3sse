@@ -88,6 +88,11 @@ class FrozenMLNEBSettings:
     def as_json(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["fire"] = self.fire_parameters
+        # The frozen rule leaves the source-endpoint override unset; omitting the unset
+        # fields keeps the frozen settings hash identical to the pre-sensitivity one.
+        for name in ("source_endpoint_fmax", "source_endpoint_steps"):
+            if payload[name] is None:
+                del payload[name]
         return payload
 
     @property
@@ -183,17 +188,22 @@ def settings_from_protocol(protocol: Mapping[str, Any]) -> FrozenMLNEBSettings:
 
 
 LITRAJ_UNBOUNDED_STEPS = 100_000_000  # ASE's DEFAULT_MAX_STEPS: "no step limit"
+# Declared deviation from LiTraj: its source-endpoint FIRE had no step limit, which can
+# stall a production run indefinitely.  The sensitivity caps it here and records every
+# unit that reaches the cap (``source_endpoint_cap_reached``).
+LITRAJ_SOURCE_ENDPOINT_STEP_CAP = 10_000
 
 
 def litraj_exact_variant(settings: FrozenMLNEBSettings) -> FrozenMLNEBSettings:
-    """LiTraj c3ca5c2 exactly: source endpoint FIRE with ASE defaults (fmax 0.05, no step
-    limit), band fmax 0.05 within its 100 steps; the convergence check is unchanged.
-    A development-set-only sensitivity (frozen ml_neb.recovered_details_added)."""
+    """LiTraj c3ca5c2: source endpoint FIRE with ASE defaults (fmax 0.05; step limit
+    capped at ``LITRAJ_SOURCE_ENDPOINT_STEP_CAP``, a declared deviation), band fmax 0.05
+    within its 100 steps; the convergence check is unchanged.  A development-set-only
+    sensitivity (frozen ml_neb.recovered_details_added)."""
 
     from dataclasses import replace
 
     return replace(settings, source_endpoint_fmax=0.05,
-                   source_endpoint_steps=LITRAJ_UNBOUNDED_STEPS, band_fmax=0.05)
+                   source_endpoint_steps=LITRAJ_SOURCE_ENDPOINT_STEP_CAP, band_fmax=0.05)
 
 
 def neb_class() -> tuple[type, str]:
@@ -470,6 +480,9 @@ def run_ml_neb(
             _calculator_call(stage, lambda o=optimizer, f=fmax, n=steps: o.run(fmax=f, steps=n),
                              work)
             endpoint_steps.append(int(optimizer.get_number_of_steps()))
+            if position == 0 and settings.source_endpoint_steps is not None:
+                record["source_endpoint_cap_reached"] = (
+                    endpoint_steps[-1] >= settings.source_endpoint_steps)
         for image in work[1:-1]:
             image.calc = calculator_factory()
         record["endpoint_optimizer_steps"] = endpoint_steps

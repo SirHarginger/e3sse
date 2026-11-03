@@ -27,6 +27,21 @@ from e3sse.softening.frame_statistics import (
 ENDPOINT_KINDS = ("source", "target")  # contracts.ENDPOINT_RELAXATION_FILE_KINDS
 
 
+def aligned_frame_stats(frame_ids: Sequence[str], model: Mapping[str, Any],
+                        reference: Mapping[str, Any]) -> FrameStats:
+    """FrameStats whose frame IDs (``<source>:<index>``) must name the statistics rows'
+    own ``frame_index`` in order; a misaligned row would attach labels to another frame."""
+
+    indices = [int(i) for i in model["frame_index"]]
+    try:
+        named = [int(str(frame_id).rsplit(":", 1)[1]) for frame_id in frame_ids]
+    except (IndexError, ValueError) as exc:
+        raise ValueError("frame IDs must have the form <source>:<index>") from exc
+    if named != indices:
+        raise ValueError("frame IDs do not match the statistics rows' frame_index")
+    return FrameStats(frame_ids, model, reference)
+
+
 class FrameStats:
     """One model's per-frame sums aligned to frame IDs (plus DFT reference energies)."""
 

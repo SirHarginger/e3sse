@@ -104,7 +104,9 @@ def _setup(spec: Mapping[str, Any], workload: str, payload: Mapping[str, Any]) -
         band = _structures(payload)
         for image in band:
             image.calc = factory()  # one calculator per image, as in production
-        return {"band": band, "settings": settings}
+        # Production workers also hold the pinned embedding extractor's own model
+        # (ml_neb_units.ml_neb_worker_setup): measured resident, conservatively always.
+        return {"band": band, "settings": settings, "extractor_reserve": factory()}
     raise ValueError(f"unknown workload {workload!r}")
 
 

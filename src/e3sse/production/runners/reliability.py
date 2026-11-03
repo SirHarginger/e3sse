@@ -120,6 +120,10 @@ def model_reliability(rows: list[dict[str, Any]], *, latent_distance: dict[str, 
         result["P4"] = {"delta_aurc": float(point), "ci95": percentile_interval(replicates),
                         "p_one_sided": one_sided_p([-v if v is not None else None
                                                     for v in replicates], null_at_or_below=0.0),
+                        "p_resolution": {
+                            "bootstrap_replicates_defined": sum(v is not None for v in replicates),
+                            "p_below_resolution": one_sided_p(
+                                [-v if v is not None else None for v in replicates]) == 0.0},
                         "p_definition": "fraction of cluster-bootstrap replicates with "
                                         "Delta-AURC* >= 0 (approximate percentile-bootstrap p)"}
     result["gate_realised_coverage"] = (sum(bool(r["gate_passes"]) for r in rows) / len(rows)
@@ -129,20 +133,20 @@ def model_reliability(rows: list[dict[str, Any]], *, latent_distance: dict[str, 
 
 def run(ctx: RunnerContext) -> dict[str, Any]:
     from e3sse.production.runners.inference_stats import holm
-    from e3sse.production.runners.pilot import eligible_models, study1_tables
+    from e3sse.production.runners.pilot import pilot_eligible_models
+    from e3sse.production.runners.representation import frozen_path_representation
     from e3sse.protocol.partitions import analysis_seed
     from e3sse.softening.study1_inputs import statistical_constants
 
     constants = statistical_constants(ctx.parent_protocol)
     records = ctx.upstream("transfer", "transfer_hop_records")
-    representation = ctx.upstream("path_representation", "path_representation")["models"]
+    representation = frozen_path_representation(ctx)["models"]
     population = ctx.upstream("development_population", "population_manifest")
     dev_edge = {u["unit_key"]: u["unit_id"] for u in population["units"] if u["role"] == "development"}
     ctx.require_outcome(role="test", outcome="transfer_errors",
                         outcome_kind="nebdft2k_fixed_geometry_evaluation_barriers",
                         unit_ids=sorted({r["hop_id"] for r in records}))
-    _, summary = study1_tables(ctx)
-    eligible = eligible_models(ctx, summary)
+    eligible = pilot_eligible_models(ctx)
     results = {}
     for model in sorted({r["model"] for r in records}):
         rows = [r for r in records if r["model"] == model and r["population"] == "primary"]
@@ -157,11 +161,15 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
             seed=analysis_seed(constants["base_seed"], "cluster_bootstrap", "study2a",
                                "reliability", "published"),
             resamples=constants["bootstrap_resamples"])
-    p4 = {m: results[m].get("P4", {}).get("p_one_sided") for m in eligible if m in results}
+    # The family is every eligible model; a model without P4 enters Holm with p = 1.
+    p4 = {m: results.get(m, {}).get("P4", {}).get("p_one_sided") for m in eligible}
     adjusted = holm(p4)
-    h6 = {"supported": any(p is not None and p < 0.05 for p in adjusted.values()),
-          "refuted": all(results[m].get("P4", {}).get("delta_aurc", 0) >= 0 for m in p4),
-          "holm_adjusted_p": adjusted}
+    deltas = {m: results.get(m, {}).get("P4", {}).get("delta_aurc") for m in eligible}
+    h6 = {"supported": any(p < 0.05 for p in adjusted.values()),
+          # refuted needs every model's Delta-AURC defined and >= 0; undefined -> inconclusive
+          "refuted": bool(deltas) and all(d is not None and d >= 0 for d in deltas.values()),
+          "holm_adjusted_p": adjusted,
+          "undefined_p_entered_as_1": sorted(m for m, p in p4.items() if p is None)}
     h6["verdict"] = "supported" if h6["supported"] else "refuted" if h6["refuted"] else "inconclusive"
     outputs = {"reliability_results": ctx.publish("reliability_results.json", {
         "models": results, "P4_H6": h6,

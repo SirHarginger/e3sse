@@ -16,7 +16,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from e3sse.production.runners.context import RunnerContext, canonical_sha256
+from e3sse.production.runners.context import RunnerContext, RunnerValidationError, canonical_sha256
 
 NOT_BUILT = {
     "fig1_e3sse_method": "method schematic: TikZ source docs/figures/e3sse_method.tex, not a data figure",
@@ -25,6 +25,24 @@ NOT_BUILT = {
     "S2_force_residuals": "needs per-component residual bins (same reason as S1)",
     "S15_representation_support_umap": "optional: umap-learn is not a pinned dependency",
     "P3D_representation": "optional presentation view (interactive HTML), not a paper figure",
+    "S6_paired_error_distributions": "needs a derived per-hop paired-error table; not produced "
+                                     "yet (declared gap, never substituted by S5/S7)",
+    "S10_latent_maps": "registered latent maps of development, calibration and prospective "
+                       "units; only development path vectors reach the derived tables",
+    "S11_latent_support": "registered support-distance view; support distances of calibration "
+                          "and pool units are not in the derived tables (declared gap)",
+    "S13_candidate_space": "registered candidate-space view; not produced (declared gap, never "
+                           "substituted by fig4 D or S17)",
+    "S16_support_vs_errors": "registered as support distance vs three error panels with tau_d; "
+                             "per-unit support distances with errors are not in the derived "
+                             "tables (declared gap; the rho_F plot is not a substitute)",
+}
+PARTIAL = {
+    "S14_representation_support_pca": "development panel only; calibration and prospective "
+                                      "panels need their path vectors in the derived tables",
+    "fig3_transfer_reliability": "panel C shows deployable methods only (B1-B4); the B5 "
+                                 "recalibration comparator and the B6 oracle are reported in "
+                                 "tables, never beside deployable methods",
 }
 
 
@@ -34,14 +52,30 @@ def _cell(value: Any) -> Any:
     return repr(value) if isinstance(value, float) else value
 
 
-def write_table(path: Path, rows: list[dict[str, Any]]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def render_table(rows: list[dict[str, Any]]) -> str:
+    import io
+
     columns = sorted({key for row in rows for key in row})
-    with path.open("x", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=columns, lineterminator="\n")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({k: _cell(row.get(k)) for k in columns})
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: _cell(row.get(k)) for k in columns})
+    return buffer.getvalue()
+
+
+def write_table(path: Path, rows: list[dict[str, Any]], *, root: Path) -> Path:
+    """Create-once CSV (temp file, fsync, hard link).  On resume an existing table must
+    be byte-identical to a fresh rendering of the same rows, never silently reused."""
+
+    from e3sse.execution.sharded_execution import publish_text_once
+
+    text = render_table(rows)
+    if path.exists():
+        if path.read_bytes() != text.encode("utf-8"):
+            raise RunnerValidationError(f"{path} differs from its re-rendered rows")
+        return path
+    publish_text_once(path, text, root=root)
     return path
 
 
@@ -95,7 +129,8 @@ def derived_tables(ctx: RunnerContext) -> dict[str, list[dict[str, Any]]]:
         if "P4" in result:
             tables["endpoints"].append({"endpoint": "P4", "model": model,
                                         "estimate": result["P4"]["delta_aurc"],
-                                        "p_one_sided": result["P4"]["p_one_sided"]})
+                                        "p_one_sided": result["P4"]["p_one_sided"],
+                                        "p_holm": reliability["P4_H6"]["holm_adjusted_p"].get(model)})
     for record in ctx.upstream("transfer", "transfer_hop_records"):
         tables["applicability_records"].append({
             "model": record["model"], "hop_id": record["hop_id"],
@@ -105,7 +140,8 @@ def derived_tables(ctx: RunnerContext) -> dict[str, list[dict[str, Any]]]:
     selection = ctx.upstream("discovery_selection", "discovery_selection")
     funnel = selection["funnel"]
     for gate in ("gate1", "ml_neb_attempted", "ml_neb_converged", "applicability_supported",
-                 "conformal_predictor_eligible", "weight_fit_holdout", "wcs_run", "selected"):
+                 "conformal_predictor_eligible", "weight_fit_holdout", "no_density_weight",
+                 "wcs_run", "selected"):
         tables["prospective_funnel"].append({"gate": gate, "count": funnel["counts"][gate],
                                              "denominator": "gate1"})
     for category, count in funnel["counts"]["failures_by_category"].items():
@@ -149,9 +185,38 @@ def representation_projection(ctx: RunnerContext) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------- figures
 
 def _frame(path: Path):
+    """A derived table as a DataFrame; an empty table (no rows, no header) is empty."""
+
     import pandas as pd
 
-    return pd.read_csv(path)
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
+def _primary(df):
+    return df[df["population"] == "primary"] if "population" in df.columns else df
+
+
+def verify_figure(manifest_path: Path, inputs: dict[str, Path], code: list[Path]) -> None:
+    """An existing figure is reused only if its inputs, plotting code and outputs are
+    exactly the current ones (never silently)."""
+
+    import json
+
+    from e3sse.production.runners.context import file_sha256
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected_inputs = {name: file_sha256(path) for name, path in sorted(inputs.items())}
+    expected_code = {str(p): file_sha256(p) for p in sorted(code)}
+    outputs_ok = all(
+        (manifest_path.parent / name).is_file() and file_sha256(manifest_path.parent / name) == digest
+        for name, digest in manifest.get("output_sha256", {}).items())
+    if (manifest.get("input_sha256") != expected_inputs
+            or manifest.get("plot_code_sha256") != expected_code or not outputs_ok):
+        raise RunnerValidationError(f"{manifest_path.name}: inputs, code or outputs differ from "
+                                    "the current derived tables")
 
 
 def figure_builders():
@@ -163,7 +228,8 @@ def figure_builders():
     from e3sse.figures.publication_style import new_figure, panel_letter, parity_line
 
     def parity(ax, df, method, label):
-        sub = df[df["method"] == method]
+        sub = _primary(df)  # metrics are primary-population only; so are the parity plots
+        sub = sub[sub["method"] == method] if not sub.empty else sub
         if sub.empty:
             ax.text(0.5, 0.5, "no data", transform=ax.transAxes, ha="center")
             return
@@ -180,14 +246,15 @@ def figure_builders():
         parity(axes[0, 0], df, "B0_raw", "raw ML barrier (eV)")
         parity(axes[0, 1], df, "B3_srt_material", "SRT barrier (eV)")
         effects = frames["transfer_paired_effects"]
-        sns.pointplot(data=effects, x="model", y="delta_mae_eV", hue="method", ax=axes[1, 0],
+        deployable = effects[effects["role"] == "deployable"] if not effects.empty else effects
+        sns.pointplot(data=deployable, x="model", y="delta_mae_eV", hue="method", ax=axes[1, 0],
                       linestyle="none", dodge=0.4, markersize=3)
         axes[1, 0].axhline(0, lw=0.5, color="0.5")
         axes[1, 0].set_ylabel("MAE reduction raw to method (eV)")
         axes[1, 0].tick_params(axis="x", rotation=45)
         curves = frames["risk_coverage_curves"]
-        sns.lineplot(data=curves[curves["score"] == "rho_F"], x="coverage", y="risk_eV",
-                     hue="model", ax=axes[1, 1], legend=False)
+        sns.lineplot(data=curves, x="coverage", y="risk_eV", hue="score", style="model",
+                     ax=axes[1, 1], legend=False)  # every registered score
         axes[1, 1].set_ylabel("selective MAE (eV)")
         for ax, letter in zip(axes.flat, "ABCD"):
             panel_letter(ax, letter)
@@ -245,10 +312,13 @@ def figure_builders():
                                 hue="model", s=5, ax=ax)
                 ax.set_xlabel("PC1 (visualization only)")
                 ax.set_ylabel("PC2")
-            elif kind == "S16":
-                df = frames["applicability_records"]
-                sns.scatterplot(data=df, x="rho_F", y="srt_error_eV", hue="model", s=5, ax=ax,
-                                legend=False)
+            elif kind == "fig2D":
+                df = frames["label_budget_downstream"]
+                sns.lineplot(data=df, x="K", y="mean_abs_srt_error_eV", hue="model", marker="o",
+                             ax=ax)
+                ax.set_xscale("log")
+                ax.set_xlabel("frames per material K")
+                ax.set_ylabel("mean |SRT - DFT| (eV)")
             elif kind == "S17":
                 sns.barplot(data=frames["prospective_funnel"], y="gate", x="count", ax=ax,
                             color="0.6")
@@ -279,7 +349,7 @@ def figure_builders():
         "S9_risk_coverage_all": (("risk_coverage_curves",), simple("S9")),
         "S12_fdr_diagnostics": (("conformal_draw_records",), simple("S12")),
         "S14_representation_support_pca": (("representation_projection",), simple("S14")),
-        "S16_support_vs_errors": (("applicability_records",), simple("S16")),
+        "fig2_panel_D_label_budget_downstream": (("label_budget_downstream",), simple("fig2D")),
         "S17_pipeline_attrition": (("prospective_funnel",), simple("S17")),
         "S18_density_ratio_diagnostics": (("density_ratio_diagnostics",), simple("S18")),
         "S19_aurc_comparison": (("risk_coverage_summary",), simple("S19")),
@@ -288,15 +358,11 @@ def figure_builders():
 
 
 ALSO_FROM_STUDY1 = {
-    "fig2_calibration": "built by the estimate stage (study1_softening_atlas + "
-                        "study1_label_budget_stability); downstream curve in "
-                        "derived/label_budget_downstream.csv",
+    "fig2_calibration": "panels A-C built by the estimate stage (study1_softening_atlas + "
+                        "study1_label_budget_stability); panel D (downstream barrier error) "
+                        "is built here as fig2_panel_D_label_budget_downstream",
     "S3_scale_bootstrap": "Study-1 bootstrap intervals (derived/study1_softening_estimates.csv)",
     "S4_li_host_scales": "Study-1 s_Li vs s_host (derived/study1_softening_estimates.csv)",
-    "S6_paired_error_distributions": "covered by S5/S7 from derived/transfer_predictions.csv",
-    "S10_latent_maps": "covered by S14 (same development projection)",
-    "S11_latent_support": "covered by S16 (support vs errors)",
-    "S13_candidate_space": "covered by fig4 D and S17",
 }
 
 
@@ -310,11 +376,11 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
     outputs: dict[str, Path] = {}
     for name, rows in tables.items():
         path = derived_dir / f"{name}.csv"
-        if not path.exists():
-            write_table(path, rows)
+        write_table(path, rows, root=ctx.work_dir)
         outputs[f"derived:{name}"] = path
     frames = {name: _frame(path) for name, path in
               ((n, derived_dir / f"{n}.csv") for n in tables)}
+    import matplotlib.pyplot as plt
     internal = ctx.internal_freeze()
     provenance = {"protocol_id": internal["protocol_id"], "revision_id": internal["protocol_id"],
                   "git_sha": internal["git_sha"],
@@ -325,21 +391,37 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
     code = [Path(__file__), Path(__file__).parents[2] / "figures" / "publication_style.py"]
     for figure_id, (inputs, draw) in sorted(figure_builders().items()):
         manifest_path = figures_dir / f"{figure_id}.figure.json"
+        input_paths = {n: derived_dir / f"{n}.csv" for n in inputs}
         if manifest_path.exists():
+            verify_figure(manifest_path, input_paths, code)
             built.append(figure_id)
             outputs[f"figure:{figure_id}"] = manifest_path
             continue
+        orphans = sorted(p.name for p in figures_dir.glob(f"{figure_id}.*")) \
+            if figures_dir.is_dir() else []
+        if orphans:  # an interrupted export: never overwritten, never silently reused
+            failed[figure_id] = f"orphan outputs without a manifest: {orphans} (inspect and move)"
+            continue
+        figure = None
         try:
             figure = draw(frames)
-            export_figure(figure, figures_dir, figure_id,
-                          inputs={n: derived_dir / f"{n}.csv" for n in inputs}, plot_code=code,
+            export_figure(figure, figures_dir, figure_id, inputs=input_paths, plot_code=code,
                           provenance=provenance)
-        except (ValueError, KeyError) as exc:
-            failed[figure_id] = f"{type(exc).__name__}: {exc}"
+        except (MemoryError, KeyboardInterrupt):
+            raise
+        except Exception as exc:  # noqa: BLE001 -- recorded per figure; the stage then stops
+            failed[figure_id] = f"{type(exc).__name__}: {exc}"[:500]
             continue
+        finally:
+            if figure is not None:
+                plt.close(figure)
         built.append(figure_id)
         outputs[f"figure:{figure_id}"] = manifest_path
-    report = {"built": built, "failed": failed, "not_built_with_reason": NOT_BUILT,
+    if failed:
+        # Every registered figure is built or declared; a failure stops the stage (exit 3)
+        # and is retried on resume, so no report claims an incomplete figure set.
+        raise RunnerValidationError(f"figures failed: {dict(sorted(failed.items()))}")
+    report = {"built": built, "partial_with_reason": PARTIAL, "not_built_with_reason": NOT_BUILT,
               "provided_elsewhere": ALSO_FROM_STUDY1}
     outputs["publication_report"] = ctx.publish("publication_report.json",
                                                 json.loads(json.dumps(report)))

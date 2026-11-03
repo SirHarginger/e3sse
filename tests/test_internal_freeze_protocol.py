@@ -127,6 +127,14 @@ def test_internal_freeze_training_access_needs_no_osf_while_parent_path_still_do
         require_outcome_access(**{**kwargs, "purpose": "prespecified_analysis"})
     kwargs["purpose"] = "prespecified_analysis"
     require_outcome_access(**kwargs, internal_freeze_protocol=_frozen_internal_protocol(parent))
+    # Study-2a gate thresholds and the pilot MDE scales: published-train non-path frames
+    # read with the tuning purpose the frozen deployment_gate.threshold_access names.
+    require_outcome_access(**{**kwargs, "purpose": "threshold_selection"},
+                           internal_freeze_protocol=_frozen_internal_protocol(parent))
+    with pytest.raises(OutcomeAccessDenied):  # tuning reads only the non-path force kinds
+        require_outcome_access(**{**kwargs, "purpose": "threshold_selection",
+                                  "outcome_kind": "mplitrj_published_train_dft_forces_energies"},
+                               internal_freeze_protocol=_frozen_internal_protocol(parent))
     provenance = internal_freeze_provenance(_frozen_internal_protocol(parent))
     assert provenance["governance"].startswith("internal_freeze:")
     assert provenance["preregistration_claimed"] is False

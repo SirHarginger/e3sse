@@ -165,15 +165,21 @@ def ensure_safe_output_dir(output_dir: Path, protected_roots: Iterable[Path]) ->
 def publish_json_once(path: Path, value: Any, *, root: Path) -> None:
     """Atomically create ``path`` (fsynced temp file + hard link); never replace."""
 
+    payload = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False)
+    publish_text_once(path, payload + "\n", root=root)
+
+
+def publish_text_once(path: Path, text: str, *, root: Path) -> None:
+    """Atomically create a UTF-8 text file (fsynced temp file + hard link); never replace."""
+
     path = Path(path)
     if not _within(path.parent, root):
         raise PermissionError(f"{path} is outside the run output directory {root}")
-    payload = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload + "\n")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         try:

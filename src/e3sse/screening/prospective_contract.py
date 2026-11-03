@@ -28,12 +28,14 @@ FAILURE_CATEGORIES = ("optimizer_non_convergence", "calculator_exception", "non_
 PREDICTION_SOURCES = ("srt_family", "raw_outside_support", "raw_family_scale_unavailable")
 
 
-def funnel(units: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def funnel(units: Sequence[Mapping[str, Any]], *, wcs_ran: bool = True) -> dict[str, Any]:
     """Counts and rates with explicit denominators from per-unit status records.
 
     Each unit has ``attempted`` (bool), ``failure`` (None or a FAILURE_CATEGORIES
     member), ``supported`` (bool, meaningful only when converged) and ``selected``
-    (bool).
+    (bool); optionally ``weight_fit_holdout`` and ``weighted`` (False: no density
+    weight, e.g. a missing descriptor, so WCS never saw the unit).  ``wcs_ran=False``
+    (WCS not run) leaves the WCS population empty.
     """
 
     gate1 = len(units)
@@ -46,10 +48,13 @@ def funnel(units: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if unit["failure"] not in FAILURE_CATEGORIES:
             raise ValueError(f"unknown failure category {unit['failure']!r}")
     converged = [u for u in attempted if u["failure"] is None]
-    supported = [u for u in converged if u["supported"]]
-    # Units in the frozen weight-fitting hold-out slice are converged but never enter WCS.
+    # Units in the frozen weight-fitting hold-out slice are converged but never enter WCS,
+    # and are outside the applicability-coverage denominator (their support is not used).
     holdout = [u for u in converged if u.get("weight_fit_holdout", False)]
-    wcs_run = [u for u in converged if not u.get("weight_fit_holdout", False)]
+    selectable = [u for u in converged if not u.get("weight_fit_holdout", False)]
+    supported = [u for u in selectable if u["supported"]]
+    no_weight = [u for u in selectable if not u.get("weighted", True)]
+    wcs_run = [u for u in selectable if u.get("weighted", True)] if wcs_ran else []
     selected = [u for u in wcs_run if u["selected"]]
     if any(u["selected"] for u in units if u not in wcs_run):
         raise ValueError("only units in the WCS-run population can be selected")
@@ -62,13 +67,15 @@ def funnel(units: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                    "ml_neb_converged": len(converged),
                    "applicability_supported": len(supported),
                    "conformal_predictor_eligible": len(converged),
-                   "weight_fit_holdout": len(holdout), "wcs_run": len(wcs_run),
+                   "weight_fit_holdout": len(holdout), "no_density_weight": len(no_weight),
+                   "wcs_run": len(wcs_run), "wcs_ran": wcs_ran,
                    "selected": len(selected),
                    "failures_by_category": {c: sum(u["failure"] == c for u in failures)
                                             for c in FAILURE_CATEGORIES}},
         "rates": {
             "ml_neb_failure_rate": rate(len(failures), len(attempted)),  # / attempted
-            "applicability_coverage": rate(len(supported), len(converged)),  # / converged
+            # / converged selectable (weight-fit hold-out excluded)
+            "applicability_coverage": rate(len(supported), len(selectable)),
             "predictor_coverage": rate(len(converged), gate1),  # / Gate-1 population
             "selection_rate": rate(len(selected), len(wcs_run)),  # / WCS-run units
         },

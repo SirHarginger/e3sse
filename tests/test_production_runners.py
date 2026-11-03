@@ -119,33 +119,61 @@ def _vector(family="oxide", hop=2.5):
     return [0.3, 8.0, 3.0, 12.0, 0.03, hop, 0.4, *one_hot]
 
 
-def test_population_roles_gate0_and_development_manifest_hash():
+def _unit(side, system, material):
+    edge = f"{material}_0_1_0_0_0"
+    return {"side": side, "chemical_system": system, "unit_edge_id": edge, "material_id": material,
+            "rate_limiting_edge_ids": [edge]}
+
+
+def test_population_roles_gate0_and_development_manifest_hash(monkeypatch):
     from e3sse.protocol.contracts import _verify_development_manifest
 
-    units = [{"side": "development", "chemical_system": "Li-O", "unit_edge_id": "mp-1_0_1_0_0_0",
-              "material_id": "mp-1", "rate_limiting_edge_ids": ["mp-1_0_1_0_0_0"]},
-             {"side": "P", "chemical_system": "Li-P-S", "unit_edge_id": "mp-2_0_1_0_0_0",
-              "material_id": "mp-2", "rate_limiting_edge_ids": ["mp-2_0_1_0_0_0"]},
-             {"side": "Q", "chemical_system": "Li-O-S", "unit_edge_id": "mp-7_0_1_0_0_0",
-              "material_id": "mp-7", "rate_limiting_edge_ids": ["mp-7_0_1_0_0_0"]},
-             {"side": "Q", "chemical_system": "Ge-Li", "unit_edge_id": "mp-8_0_1_0_0_0",
-              "material_id": "mp-8", "rate_limiting_edge_ids": ["mp-8_0_1_0_0_0"]}]
+    # Li-P-S is a P weight-fit-slice system (a Gate-0 reference unit); Li-O-Cl is a P
+    # calibration unit.  Calibration units never shape the Gate-0 envelope.
+    slice_systems = {"Li-P-S"}
+    monkeypatch.setattr(population, "weight_fit_slice",
+                        lambda parent, system, fraction: system in slice_systems)
+    units = [_unit("development", "Li-O", "mp-1"), _unit("P", "Li-P-S", "mp-2"),
+             _unit("P", "Cl-Li-O", "mp-3"), _unit("P", "Li-O-P", "mp-4"),
+             _unit("Q", "Li-O-S", "mp-7"), _unit("Q", "Ge-Li", "mp-8"),
+             _unit("Q", "Li-O-P-S", "mp-9"), _unit("Q", "Li-S", "mp-10")]
     descriptors = {
-        "development:Li-O": {"vector": _vector(hop=2.0), "elements": ["Li", "O"], "chemical_system": "Li-O"},
-        "P:Li-P-S": {"vector": _vector("sulfide", 3.0), "elements": ["Li", "P", "S"],
-                     "chemical_system": "Li-P-S"},
-        "Q:Li-O-S": {"vector": _vector(hop=2.5), "elements": ["Li", "O", "S"], "chemical_system": "Li-O-S"},
-        "Q:Ge-Li": {"vector": _vector(hop=2.5), "elements": ["Ge", "Li"], "chemical_system": "Ge-Li"}}
+        "development:Li-O": {"vector": _vector(hop=2.0), "chemical_system": "Li-O"},
+        "P:Li-P-S": {"vector": _vector("sulfide", 3.0), "chemical_system": "Li-P-S"},
+        # wide calibration hop and an extra element: must not widen the envelope
+        "P:Cl-Li-O": {"vector": _vector(hop=9.0), "chemical_system": "Cl-Li-O"},
+        "P:Li-O-P": {"vector": _vector(hop=2.5), "chemical_system": "Li-O-P"},
+        "Q:Li-O-S": {"vector": _vector(hop=2.5), "chemical_system": "Li-O-S"},
+        "Q:Ge-Li": {"vector": _vector(hop=2.5), "chemical_system": "Ge-Li"},
+        "Q:Li-O-P-S": {"vector": _vector(hop=8.0), "chemical_system": "Li-O-P-S"},
+        "Q:Li-S": {"vector": None, "chemical_system": "Li-S"}}
     built, manifest = population.build_population(units, descriptors, parent_protocol_id="p" * 64,
                                                   fraction=0.2)
     roles = {u["unit_key"]: u["role"] for u in built["units"]}
     assert roles["development:Li-O"] == "development"
-    assert roles["Q:Ge-Li"] == "excluded_gate0"  # Ge has no calibration-side support
-    assert roles["Q:Li-O-S"] in ("pool", "pool_weight_slice")
+    assert roles["P:Li-P-S"] == "calibration_weight_slice"
+    assert roles["P:Cl-Li-O"] == "excluded_gate0"  # Gate 0 applies to P calibration units too
+    assert roles["P:Li-O-P"] == "calibration"
+    assert roles["Q:Ge-Li"] == "excluded_gate0"  # Ge outside the reference elements
+    assert roles["Q:Li-O-P-S"] == "excluded_gate0"  # 8.0 A only inside a calibration unit's range
+    assert roles["Q:Li-S"] == "excluded_missing_covariate"  # missing evidence, not a Gate-0 failure
+    assert roles["Q:Li-O-S"] == "pool"
+    assert built["gate0"]["hop_length_range_A"] == [2.0, 3.0]
+    assert built["gate0"]["element_support"] == ["Li", "O", "P", "S"]
     internal = {"amendments": {"prospective": {"development_manifest_sha256": manifest["manifest_sha256"]}}}
     _verify_development_manifest(manifest, internal, ["mp-1_0_1_0_0_0"])  # contract-compatible hash
     with pytest.raises(ValueError):
         _verify_development_manifest(manifest, internal, ["mp-2_0_1_0_0_0"])  # not development
+
+
+def test_weight_fit_slice_is_an_exact_identity_only_rule():
+    import hashlib
+    from fractions import Fraction
+
+    for system in ("Li-O", "Li-P-S", "Cl-Li", "Ge-Li-S"):
+        digest = hashlib.sha256(b"e3sse.weight-holdout\0" + b"pid\0" + system.encode()).hexdigest()
+        assert population.weight_fit_slice("pid", system, 0.2) == (
+            Fraction(int(digest, 16), 2 ** 256) < Fraction(1, 5))
 
 
 # ----------------------------------------------------------------------- representation/support
@@ -199,17 +227,26 @@ def test_bvse_reproduction_tolerance():
     assert compare_paths(path, path * 2, settings)["reason"] == "image_count_differs"
 
 
-def test_pilot_mde_simulation_is_deterministic():
-    first = mde_simulation([0.8, 0.85, 0.9], 0.02, [0.3, 0.5, 0.7, 0.4] * 10, noise_eV=0.05,
-                           seed=4, simulations=200)
-    assert first == mde_simulation([0.8, 0.85, 0.9], 0.02, [0.3, 0.5, 0.7, 0.4] * 10,
-                                   noise_eV=0.05, seed=4, simulations=200)
-    assert first["rho_srt_median"] > 0
+def test_pilot_mde_is_a_power_analysis():
+    barriers = [0.3, 0.5, 0.7, 0.4] * 10
+    clusters = [f"c{i // 2}" for i in range(len(barriers))]
+    args = ([0.6, 0.7, 0.8], 0.02, barriers, clusters)
+    first = mde_simulation(*args, noise_eV=0.02, alpha=0.025, seed=4, simulations=60,
+                           resamples=100)
+    assert first == mde_simulation(*args, noise_eV=0.02, alpha=0.025, seed=4, simulations=60,
+                                   resamples=100)
+    curve = first["power_curve"]
+    assert curve[0]["lambda"] == 0.0 and abs(curve[0]["true_rho_srt"]) < 1e-12  # no correction
+    assert curve[0]["power"] <= 0.1  # the test holds its level at no effect
+    assert curve[-1]["true_rho_srt"] > 0.5 and curve[-1]["power"] >= 0.8
+    assert first["mde_rho_srt"] is not None and 0 < first["mde_rho_srt"] <= curve[-1]["true_rho_srt"]
 
 
 def test_holm_and_cluster_bootstrap():
+    # an undefined member stays in the family (m = 3) and enters as p = 1
     adjusted = inference_stats.holm({"a": 0.01, "b": 0.04, "c": None})
-    assert adjusted == {"a": 0.02, "b": 0.04, "c": None}
+    assert adjusted == pytest.approx({"a": 0.03, "b": 0.08, "c": 1.0})
+    assert inference_stats.p_resolution([1.0, 2.0, None])["p_reported_as"] == "< 0.5"
     clusters = ["x", "x", "y", "z", "z"]
     values = inference_stats.cluster_bootstrap(clusters, lambda idx: float(len(idx)), seed=1,
                                                resamples=50)
@@ -338,3 +375,156 @@ def test_non_training_outcomes_need_the_pilot_of_this_run(tmp_path, monkeypatch)
 
 def test_gate0_element_list_is_the_frozen_code_rule():
     assert "Fe" in primary_exclusion_elements() and "Li" not in primary_exclusion_elements()
+
+
+# ----------------------------------------------------------------------- study 4
+
+def test_study4_family_fallback_is_symmetric_and_per_family(monkeypatch):
+    from e3sse.production.runners import family_scale, study4
+
+    class FakePooled:
+        def estimate(self, frame_ids, *, materials, parameters):
+            frame_ids = list(frame_ids)
+            return {"s_hat": 0.8 if frame_ids else None, "frames": frame_ids,
+                    "unsupported_reasons": [] if frame_ids else ["no_frames"]}
+
+    # the training-side stratum has only oxide frames: sulfide needs the fallback
+    monkeypatch.setattr(family_scale, "scale_frames", lambda membership, population_of, *,
+                        training_systems: [{"frame_id": "t1", "material_id": "m-ox"}])
+    family_of = {"m-ox": "oxide", "m-s1": "sulfide", "m-s2": "sulfide", "m-ox2": "oxide"}
+    unit_frames = {"h1": [("c1", "m-s1")], "h2": [("c2", "m-s2")], "h3": [("c3", "m-ox2")]}
+    scales = study4.repeat_scales(FakePooled(), [], {}, family_of, set(), unit_frames, {})
+    assert scales["family"]["oxide"]["source"] == "training_side_systems_without_nebdft2k_hops"
+    sulfide = scales["family"]["sulfide"]
+    assert sulfide["source"] == "symmetric_fallback_family_units_forces"
+    assert sulfide["frames"] == ["c1", "c2"]  # forces of that family's units only, both sides
+
+
+def test_study4_h5b_is_paired_by_draw_and_resamples_repeats():
+    from e3sse.production.runners import study4
+
+    records = []
+    for repeat in range(4):
+        for draw in range(3):
+            for predictor, power in (("raw", 0.4), ("SRT_global", 0.6), ("SRT_family", 0.4),
+                                     ("SRT_gated_correct_or_raw", None)):
+                records.append({"repeat": repeat, "draw": draw, "predictor": predictor,
+                                "c_eV": 0.5, "alpha": 0.2, "method": "BH", "power": power})
+    contract = {"threshold_eV": [0.5], "alpha": [0.2]}
+    h5b = study4.h5b_power_differences(records, contract, seed=3, resamples=200)
+    glob = h5b["SRT_global-raw|c=0.5|alpha=0.2|BH"]
+    assert glob["mean_power_difference"] == pytest.approx(0.2) and glob["repeats"] == 4
+    assert glob["supported"] is True
+    assert h5b["SRT_family-raw|c=0.5|alpha=0.2|BH"]["supported"] is False
+    assert h5b["SRT_gated_correct_or_raw-raw|c=0.5|alpha=0.2|BH"]["repeats"] == 0
+    assert study4._repeat_se([{"repeat": r, "power": p} for r, p in
+                              ((0, 0.2), (1, 0.4), (2, None))], "power") == pytest.approx(0.1)
+
+
+# ----------------------------------------------------------------------- publication
+
+def test_every_registered_figure_is_built_or_declared_exactly_once():
+    import json
+
+    from e3sse.production.runners import publication
+
+    registry = json.loads((REPOSITORY / "configs" / "figure_registry.json").read_text())
+    registered = {entry["figure_id"] for entry in registry["figures"]}
+    built = set(publication.figure_builders())
+    declared = set(publication.NOT_BUILT) | set(publication.ALSO_FROM_STUDY1)
+    assert not built & declared
+    assert registered <= built | declared | {"fig2_panel_D_label_budget_downstream"}
+    assert set(publication.PARTIAL) <= built
+
+
+def test_empty_derived_table_reads_as_empty_frame_and_tables_are_create_once(tmp_path):
+    from e3sse.production.runners import publication
+
+    path = publication.write_table(tmp_path / "derived" / "empty.csv", [], root=tmp_path)
+    assert publication._frame(path).empty
+    rows = [{"a": 1.0, "b": None}]
+    table = publication.write_table(tmp_path / "derived" / "t.csv", rows, root=tmp_path)
+    assert publication.write_table(table, rows, root=tmp_path) == table  # identical resume
+    with pytest.raises(publication.RunnerValidationError):
+        publication.write_table(table, [{"a": 2.0}], root=tmp_path)
+
+
+def test_runner_constants_equal_the_structured_protocol_values():
+    from e3sse.production.runners import bvse_paths, ml_neb_units, transfer
+
+    protocol = json.loads((REPOSITORY / "configs" /
+                           "reliability_gated_internal_freeze_protocol.json").read_text())
+    amendments = protocol["amendments"]
+    check = amendments["representation"]["path_representation"]["degeneracy_check"]
+    assert (representation.SUPPORT_K, representation.LOCSO_CV_MIN,
+            representation.TAU_BOOTSTRAP_CV_MAX, representation.TAU_BOOTSTRAP_RESAMPLES) == (
+        check["support_k"], check["locso_cv_min"], check["tau_bootstrap_cv_max"],
+        check["tau_bootstrap_resamples"])
+    budget = amendments["label_budget_downstream"]
+    assert (transfer.LABEL_BUDGET_MIN_FRAMES, transfer.LABEL_BUDGET_MIN_HOPS) == (
+        budget["minimum_frames"], budget["minimum_hops_count"])
+    ml_neb = amendments["prospective"]["ml_neb"]
+    assert ml_neb_units.REPRODUCIBILITY_SUBSET == \
+        ml_neb["frozen_numeric_settings"]["reproducibility_subset"]["size_hops"]
+    recipe = bvse_paths.recipe(amendments)
+    assert recipe["bvse_neb_options"] == {"k": 2.0, "default": True, "distort": True, "gm": False}
+    assert (recipe["superedge_cutoff_A"], recipe["n_images"], recipe["fire_fmax"],
+            recipe["fire_steps"]) == (8.0, 5, 0.1, 100)
+
+
+def test_collapsed_embeddings_fail_the_degeneracy_check_without_infinities():
+    reference = {"loo_distances": [0.0] * 6, "reference_chemical_systems": list("aabbcc"),
+                 "quantile_level": 0.8}
+    check = representation.degeneracy(reference, seed=1)
+    assert check["passes"] is False and check["tau_bootstrap_cv"] is None
+    json.dumps(check, allow_nan=False)
+
+
+def test_population_units_must_be_one_hop_and_included_in_the_right_split():
+    unit = _unit("P", "Li-O", "mp-1")
+    hop = {"record_kind": "nebdft2k_hop", "hop_id": unit["unit_edge_id"],
+           "eligibility_status": "included", "published_split": "train"}
+    population.validate_units([{**unit, "rate_limiting_edge_ids": [
+        "mp-1_0_1_0_0_0", "mp-1_1_0_0_0_0"]}], [hop])  # both directions of one hop
+    with pytest.raises(RunnerValidationError, match="more than one physical hop"):
+        population.validate_units([{**unit, "rate_limiting_edge_ids": [
+            "mp-1_0_1_0_0_0", "mp-1_0_2_0_0_0"]}], [hop])
+    with pytest.raises(RunnerValidationError, match="published-train"):
+        population.validate_units([unit], [{**hop, "published_split": "val"}])
+    with pytest.raises(RunnerValidationError, match="published-test"):
+        population.validate_units([{**unit, "side": "development"}], [hop])
+
+
+def test_upstream_path_verifies_prepare_model_and_stage_manifests(tmp_path):
+    run = tmp_path / "run"
+    ctx = RunnerContext(repository=REPOSITORY, config_path=tmp_path / "c.json", run_dir=run,
+                        stage="study4")
+    artifact = run / "transfer" / "test_frames" / "dft_reference" / "m.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("{}\n")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    record = {"outputs": {"test_frame_statistics:dft_reference": {"path": str(artifact),
+                                                                  "sha256": digest}}}
+    (run / "transfer" / "prepare_manifest.json").write_text(json.dumps(record))
+    assert ctx.upstream_path("transfer", "test_frame_statistics:dft_reference",
+                             phase="prepare") == artifact
+    with pytest.raises(MissingEvidence):  # the reduce manifest does not exist yet
+        ctx.upstream_path("transfer", "test_frame_statistics:dft_reference")
+    artifact.write_text('{"tampered": true}\n')
+    with pytest.raises(RunnerValidationError):
+        ctx.upstream_path("transfer", "test_frame_statistics:dft_reference", phase="prepare")
+
+
+def test_bvse_runtime_lock_is_required_and_parsed(tmp_path):
+    from e3sse.production.runners import bvse_paths
+
+    lock = tmp_path / "requirements.lock"
+    lock.write_text("# comment\nions==0.4.1 \\\n    --hash=sha256:abc\nase==3.29.0\n"
+                    "PyYAML==6.0.3 ; python_version >= '3.11'\n")
+    assert bvse_paths._lock_versions(lock) == {"ions": "0.4.1", "ase": "3.29.0", "pyyaml": "6.0.3"}
+    with pytest.raises(MissingEvidence, match="lock not pinned"):
+        bvse_paths.runtime_versions({"ions_version": "0.4.1", "environment_lock": {
+            "path": str(lock), "sha256": "server_evidence_pending"}})
+    with pytest.raises(RunnerValidationError, match="SHA-256"):
+        bvse_paths.runtime_versions({"ions_version": "0.4.1", "environment_lock": {
+            "path": str(lock), "sha256": "0" * 64}})

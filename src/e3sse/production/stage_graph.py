@@ -32,6 +32,9 @@ ALL_STAGES = "all"
 IMPLEMENTATION_STATUSES = ("implemented", "missing_runner", "deferred")
 
 TRAIN_FORCES = "mplitrj_published_train_dft_forces_energies"
+# Published-train non-path force reads for threshold selection (contract
+# PILOT_TUNING_OUTCOME_KINDS; deployment_gate.threshold_access).
+TRAIN_NONPATH_FORCE = "mplitrj_nonpath_dft_force"
 TEST_SIDE_NONPATH_FORCES = "mplitrj_test_side_nonpath_forces"
 VALIDATION_FORCES = "mplitrj_validation_frame_forces"  # validation systems are Study-4 units
 OWN_PATH_FORCES_ORACLE = "mplitrj_own_path_forces_oracle"
@@ -41,6 +44,7 @@ DEVELOPMENT_BARRIERS = "nebdft2k_development_barriers"
 CALIBRATION_BARRIERS = "nebdft2k_conformal_calibration_barriers"
 REPEATED_PARTITION_BARRIERS = "nebdft2k_repeated_partition_barriers"
 CALIBRATION_LABEL_KINDS = frozenset({CALIBRATION_BARRIERS, REPEATED_PARTITION_BARRIERS})
+ML_NEB_BEFORE_CALIBRATION_LABELS = ("deployment_calibration", "discovery")
 
 PRE_FREEZE_STAGES = frozenset({
     "runtime_audit", "resource_profile", "gate1_population_audit", "bvse_reproduction",
@@ -56,16 +60,17 @@ PERMITTED_OUTCOME_ACCESS: dict[str, frozenset[str]] = {
     "freeze": frozenset(),
     "estimate": frozenset({TRAIN_FORCES}),
     # Seal 2: training-only pilot over Study-1 force-derived estimates (no barrier).
-    "pilot": frozenset({TRAIN_FORCES}),
+    "pilot": frozenset({TRAIN_FORCES, TRAIN_NONPATH_FORCE}),
     "family_scale": frozenset({FAMILY_SCALE_FORCES}),
-    "transfer": frozenset({TRAIN_FORCES, TEST_SIDE_NONPATH_FORCES, OWN_PATH_FORCES_ORACLE,
+    "transfer": frozenset({TRAIN_FORCES, TRAIN_NONPATH_FORCE, TEST_SIDE_NONPATH_FORCES,
+                           OWN_PATH_FORCES_ORACLE,
                            EVALUATION_BARRIERS}),
     "reliability": frozenset({EVALUATION_BARRIERS}),
     "weight_slice_ml_neb": frozenset(),
     "model_selection": frozenset({DEVELOPMENT_BARRIERS}),
     "deployment_calibration": frozenset(),
     "linear_recalibration_comparator": frozenset({CALIBRATION_BARRIERS, EVALUATION_BARRIERS}),
-    "controlled_selection": frozenset({TRAIN_FORCES, TEST_SIDE_NONPATH_FORCES,
+    "controlled_selection": frozenset({TRAIN_FORCES, TRAIN_NONPATH_FORCE, TEST_SIDE_NONPATH_FORCES,
                                        VALIDATION_FORCES, REPEATED_PARTITION_BARRIERS}),
     "density_ratio": frozenset(),
     "discovery": frozenset(),
@@ -87,6 +92,13 @@ REQUIRED_PRECEDENCE: tuple[tuple[str, str], ...] = (
     ("model_selection", "discovery"),
     ("model_selection", "controlled_selection"),
     ("model_selection", "linear_recalibration_comparator"),
+    # freeze_order: calibration ML-NEB, then pool ML-NEB, both before any reader of a
+    # conformal-calibration-system label (so no label can influence an ML-NEB run).
+    ("deployment_calibration", "discovery"),
+    ("deployment_calibration", "linear_recalibration_comparator"),
+    ("discovery", "linear_recalibration_comparator"),
+    ("deployment_calibration", "controlled_selection"),
+    ("discovery", "controlled_selection"),
     ("deployment_calibration", "density_ratio"),
     ("discovery", "density_ratio"),
     ("weight_slice_ml_neb", "density_ratio"),
@@ -204,6 +216,10 @@ def _validate_order(graph: StageGraph) -> None:
             if name in selection_ancestors or MODEL_SELECTION_STAGE not in graph.ancestors(name):
                 raise StageGraphError(f"stage {name!r} reads calibration labels and must follow "
                                       "model_selection")
+            for ml_neb in ML_NEB_BEFORE_CALIBRATION_LABELS:
+                if ml_neb in stages and ml_neb not in graph.ancestors(name):
+                    raise StageGraphError(f"stage {name!r} reads calibration labels and must "
+                                          f"follow {ml_neb!r}")
 
 
 def build_stage_graph(entries: Iterable[Mapping[str, Any]], *,

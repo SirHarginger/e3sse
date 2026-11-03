@@ -45,15 +45,16 @@ class StructureSource:
         return {"spec": self.spec, "files_read": dict(sorted(self.files_read.items()))}
 
     def _verified(self, path: Path) -> Path:
-        from e3sse.production.runners.gate1_tables import linkage_module
+        from e3sse.production.runners.gate1_tables import linkage_module, verify_g0_file
 
-        linkage = linkage_module()
         if str(path) not in self.files_read:
-            digest = linkage._sha256(path)
             try:
-                linkage.verify_against_g0(path, digest, self.g0_inputs)
-            except linkage.AuditError as exc:
+                digest = verify_g0_file(path, self.g0_inputs)
+            except linkage_module().AuditError as exc:
                 raise RunnerValidationError(str(exc)) from exc
+            pinned = self.spec.get("sha256")
+            if self.spec["kind"] == "optimade_jsonl" and pinned and pinned != digest:
+                raise RunnerValidationError(f"{path}: SHA-256 differs from runners.structures pin")
             self.files_read[str(path)] = digest
         return path
 
@@ -70,9 +71,10 @@ class StructureSource:
             path = self._resolve(self.spec["pattern"].format(material_id=material_id))
             if not path.is_file():
                 raise MissingEvidence(f"no pristine structure file for {material_id}")
-            atoms = read(self._verified(path))
-            atoms.calc = None  # geometry only: drop any labels the reader attached
-            return atoms
+            frames = read(self._verified(path), index=":")
+            if len(frames) != 1:
+                raise RunnerValidationError(f"{path}: {len(frames)} structures, expected one")
+            return _geometry_only(frames[0])
         return self._optimade_atoms(material_id)
 
     def _optimade_atoms(self, material_id: str) -> Any:
@@ -103,12 +105,37 @@ class StructureSource:
         symbols = []
         for name in attributes["species_at_sites"]:
             chemical = symbol_of[name]
-            if len(chemical) != 1:
-                raise RunnerValidationError(f"{material_id}: disordered site {name}")
+            if len(chemical) != 1 or chemical[0] in ("X", "vacancy"):
+                raise RunnerValidationError(f"{material_id}: disordered or vacant site {name}")
             symbols.append(chemical[0])
         return Atoms(symbols=symbols, positions=attributes["cartesian_site_positions"],
                      cell=attributes["lattice_vectors"],
                      pbc=[bool(d) for d in attributes.get("dimension_types", [1, 1, 1])])
+
+
+def _geometry_only(atoms: Any) -> Any:
+    """A fresh Atoms with numbers, positions, cell and pbc only (no labels, info, arrays)."""
+
+    from ase import Atoms
+
+    return Atoms(numbers=atoms.numbers.copy(), positions=atoms.positions.copy(),
+                 cell=atoms.cell.array.copy(), pbc=atoms.pbc.copy())
+
+
+def check_edge_sites(atoms: Any, edge: Mapping[str, Any]) -> None:
+    """The edge_id's site indices must address Li sites of this structure.
+
+    edge_id indices refer to LiTraj's site order; a pristine source in another order
+    would silently give a wrong hop, so a non-Li or out-of-range site fails closed.
+    """
+
+    source, target = int(edge["source"]), int(edge["target"])
+    if not (0 <= source < len(atoms) and 0 <= target < len(atoms)):
+        raise RunnerValidationError("edge site index outside the structure")
+    symbols = atoms.get_chemical_symbols()
+    if symbols[source] != "Li" or symbols[target] != "Li":
+        raise RunnerValidationError(f"edge sites {source}, {target} are not Li in this structure "
+                                    "(site order differs from LiTraj's)")
 
 
 def hop_length(atoms: Any, edge: Mapping[str, Any]) -> float:
@@ -116,9 +143,8 @@ def hop_length(atoms: Any, edge: Mapping[str, Any]) -> float:
 
     import numpy as np
 
+    check_edge_sites(atoms, edge)
     source, target = int(edge["source"]), int(edge["target"])
-    if not (0 <= source < len(atoms) and 0 <= target < len(atoms)):
-        raise RunnerValidationError("edge site index outside the structure")
     offset = np.asarray(edge["offset"], dtype=float)
     vector = atoms.positions[target] + offset @ np.asarray(atoms.cell) - atoms.positions[source]
     return float(np.linalg.norm(vector))

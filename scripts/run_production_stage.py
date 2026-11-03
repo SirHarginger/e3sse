@@ -11,7 +11,8 @@ is resumable (create-once artifacts, verified shard checkpoints).
 
 Exit codes: 0 done (the last line is ``{"manifest": path}``); 2 missing evidence; 3
 validation failure (evidence contradicts a frozen requirement or an outcome read was
-refused); anything else is an infrastructure failure.
+refused); 4 command-line or routing error (never reported as missing evidence);
+anything else is an infrastructure failure.
 """
 
 from __future__ import annotations
@@ -24,6 +25,14 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PHASES = {"prepare": "prepare", "model": "run_model", "reduce": "run"}
+EXIT_USAGE = 4  # argparse's own exit status 2 would read as "missing evidence"
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        print(f"{self.prog}: error: {message}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
 MANIFEST_NAMES = {"prepare": "prepare_manifest.json", "model": "model_manifest.json",
                   "reduce": "stage_manifest.json"}
 
@@ -40,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     from e3sse.protocol.contracts import OutcomeAccessDenied
 
-    parser = argparse.ArgumentParser(description=__doc__,
+    parser = _Parser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--run-dir", type=Path, required=True)

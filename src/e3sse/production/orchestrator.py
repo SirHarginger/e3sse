@@ -1030,9 +1030,14 @@ class RunnerAdapter(StageAdapter):
         if self.models == "each":
             return sorted(ctx.models)
         if self.models == "selected":
-            path = ctx.stage_dir("model_selection") / "model_selection.json"
-            if not path.is_file():
+            stage_manifest = ctx.stage_dir("model_selection") / "stage_manifest.json"
+            if not stage_manifest.is_file():
                 raise StageBlocked(BLOCKED_MISSING_EVIDENCE, "no model selection in this run")
+            output = _load_json(stage_manifest)["outputs"].get("model_selection")
+            path = Path(output["path"]) if output else None
+            if path is None or not path.is_file() or file_sha256(path) != output["sha256"]:
+                raise StageBlocked(VALIDATION_FAILURE, "model_selection.json differs from its "
+                                                       "stage manifest")
             return [_load_json(path)["selection"]["selected_model"]]
         return []
 
@@ -1060,6 +1065,9 @@ class RunnerAdapter(StageAdapter):
         manifest = Path(_last_json(output)["manifest"])
         for name, item in _load_json(manifest)["outputs"].items():
             key = f"{name}@{kwargs.get('model')}" if kwargs.get("model") else name
+            if key in result.outputs:
+                raise StageBlocked(VALIDATION_FAILURE, f"{stage.name}: output {key!r} produced "
+                                                       "by two phases")
             result.outputs[key] = {"path": item["path"], "sha256": item["sha256"]}
         result.outputs[f"manifest:{phase}" + (f":{kwargs['model']}" if kwargs.get("model") else "")] = \
             output_record(manifest)

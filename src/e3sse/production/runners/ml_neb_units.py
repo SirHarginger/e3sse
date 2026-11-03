@@ -12,8 +12,11 @@ discovery              pool                                        selected
 =====================  ==========================================  ============
 
 Every unit runs ``barriers.ml_neb.run_ml_neb`` once on its frozen BVSE path, with
-the frozen settings, the frozen per-model dtype and a fresh calculator per image
-(a per-worker pool, reset between units).  No unit is retried: a failure is a
+the frozen settings, the frozen per-model dtype and a distinct calculator per image
+(a per-worker pool, reset between units).  This is equivalent to "one calculator per
+image": each image gets its own instance, and ``reset()`` clears every cached result,
+so no state crosses images or units; only the loaded weights are reused, and the
+dtype of every floating-point parameter of every pooled calculator is checked.  No unit is retried: a failure is a
 recorded category, and only infrastructure interruptions resume.  Units without a
 usable BVSE path are recorded as not attempted (an initialisation failure).  For
 models whose atom-level representation is validated, the migrating-Li embedding of
@@ -46,8 +49,10 @@ PRE_FREEZE_STAGES = ("development_ml_neb",)
 REPRODUCIBILITY_SUBSET = 20
 REPRODUCIBILITY_TOLERANCE_EV = 1e-4
 CODE_FILES = ("src/e3sse/barriers/ml_neb.py", "src/e3sse/production/runners/ml_neb_units.py",
-              "src/e3sse/representation/atom_embeddings.py", "src/e3sse/protocol/adapters.py",
+              "src/e3sse/representation/atom_embeddings.py",
+              "src/e3sse/representation/embedding_capability.py", "src/e3sse/protocol/adapters.py",
               "src/e3sse/screening/prospective_contract.py")
+ATOM_ORDER_ATOL = 1e-6  # permutation check of the capture (float noise only)
 
 
 # --------------------------------------------------------------------- worker side
@@ -66,19 +71,26 @@ def ml_neb_worker_setup(model: dict, checkpoint: str, frozen_settings: dict, dty
 
     settings = settings_from_protocol({"amendments": {"prospective": {"ml_neb": {
         "frozen_numeric_settings": frozen_settings}}}})
-    load = lambda: build_calculator(model, Path(checkpoint))
-    probe = load()
-    parameters = list(torch_module(probe, model["adapter_name"]).parameters())
-    observed = str(parameters[0].dtype).replace("torch.", "") if parameters else None
-    if observed != dtype:
-        raise RuntimeError(f"{model['canonical_name']}: loaded dtype {observed} is not the "
-                           f"frozen ML-NEB dtype {dtype}")
+
+    def checked(calc: Any) -> Any:
+        """Every floating-point parameter must have the frozen dtype (not just the first)."""
+
+        found = {str(p.dtype).replace("torch.", "")
+                 for p in torch_module(calc, model["adapter_name"]).parameters()
+                 if p.is_floating_point()}
+        if found != {dtype}:
+            raise RuntimeError(f"{model['canonical_name']}: loaded floating dtypes {sorted(found)} "
+                               f"are not the frozen ML-NEB dtype {dtype}")
+        return calc
+
+    load = lambda: checked(build_calculator(model, Path(checkpoint)))
+    pool = [load()]  # the probe is the pool's first calculator
     extractor = None
     if capture is not None:
         extractor = embedding_extractor(model, load(), capture_mode=capture["capture_mode"],
                                         location=capture["location"])
-    return {"load": load, "pool": [], "settings": settings, "extractor": extractor,
-            "provenance": {**provenance, "dtype": observed,
+    return {"load": load, "pool": pool, "settings": settings, "extractor": extractor,
+            "provenance": {**provenance, "dtype": dtype,
                            "torch_intra_op_threads": torch.get_num_threads(),
                            "torch_inter_op_threads": torch.get_num_interop_threads()}}
 
@@ -115,18 +127,25 @@ def ml_neb_task(payload: dict[str, Any], context: dict[str, Any]) -> dict[str, A
     extractor = context["extractor"]
     if record["status"] == "converged" and extractor is not None and payload.get("embed", True):
         moving = record["migrating_atom_index"]
-        rows, deterministic, finite = [], True, True
-        for frame_positions in record["band_geometry"]["positions"]:
+        rows, deterministic, finite, order_difference = [], True, True, None
+        for position, frame_positions in enumerate(record["band_geometry"]["positions"]):
             atoms = _atoms({**record["band_geometry"], "positions": frame_positions})
             first, second = extractor(atoms), extractor(atoms)
             deterministic &= bool(np.array_equal(first, second))
             finite &= bool(np.isfinite(first).all())
             if first.shape[0] != len(atoms):
                 raise RuntimeError("the pinned capture is not atom-level for this band")
+            if position == 0:  # rows follow atom order: a reversed copy gives reversed rows
+                order = np.arange(len(atoms))[::-1]
+                permuted = np.asarray(extractor(atoms[order]))
+                order_difference = float(np.abs(permuted[np.argsort(order)] - first).max())
             rows.append(first[moving].tolist())
         record["migrating_li_embeddings"] = rows
-        record["embedding_checks"] = {"finite": finite, "deterministic": deterministic,
-                                      "atom_order_preserved": True}
+        record["embedding_checks"] = {
+            "finite": finite, "deterministic": deterministic,
+            "atom_order_max_abs_difference": order_difference,
+            "atom_order_preserved": order_difference is not None
+            and order_difference <= ATOM_ORDER_ATOL}
     return record
 
 
@@ -156,8 +175,35 @@ def pinned_capture(ctx: RunnerContext, model: str, amendments: dict[str, Any]) -
             "report_sha256": pin["sha256"]}
 
 
+def frozen_ml_neb_identity(ctx: RunnerContext, model: str) -> dict[str, Any]:
+    """Settings hash, dtype and capture of ``model`` under the frozen protocol."""
+
+    from e3sse.barriers.ml_neb import frozen_model_dtype, settings_from_protocol
+
+    amendments = ctx.frozen_amendments()
+    capture = pinned_capture(ctx, model, amendments)
+    return {"settings_sha256": settings_from_protocol({"amendments": amendments}).settings_sha256,
+            "dtype": frozen_model_dtype({"amendments": amendments}, model).split()[0],
+            "capture_report_sha256": None if capture is None else capture["report_sha256"]}
+
+
+def require_development_matches_freeze(ctx: RunnerContext, model: str) -> dict[str, Any]:
+    """Development ML-NEB ran before the freeze under the active protocol; every
+    post-freeze consumer requires its settings, dtype and capture to equal the frozen
+    ones, so model selection and later stages never mix two ML-NEB definitions."""
+
+    development = ctx.upstream("development_ml_neb", "ml_neb_records", model=model)
+    expected = frozen_ml_neb_identity(ctx, model)
+    observed = {key: development.get(key) for key in expected}
+    if observed != expected:
+        raise RunnerValidationError(f"{model}: development ML-NEB identity {observed} differs "
+                                    f"from the frozen identity {expected}")
+    return development
+
+
 def reproducibility_subset(unit_ids: list[str]) -> list[str]:
-    """First 20 development hops by SHA-256 rank of the hop ID (frozen rule)."""
+    """First 20 development hops by SHA-256 rank of the hop ID (frozen rule), ranked
+    among development hops with a usable BVSE path (the hops ML-NEB can run)."""
 
     return sorted(unit_ids, key=lambda h: (hashlib.sha256(h.encode()).hexdigest(), h)
                   )[:REPRODUCIBILITY_SUBSET]
@@ -166,7 +212,11 @@ def reproducibility_subset(unit_ids: list[str]) -> list[str]:
 def run_model(ctx: RunnerContext) -> dict[str, Any]:
     """Executed by the model's frozen interpreter (``--model``)."""
 
-    from e3sse.barriers.ml_neb import frozen_model_dtype, settings_from_protocol
+    from e3sse.barriers.ml_neb import (
+        frozen_model_dtype,
+        litraj_exact_variant,
+        settings_from_protocol,
+    )
     from e3sse.production.runners.bvse_paths import load_path
 
     stage, model = ctx.stage, ctx.model
@@ -183,7 +233,12 @@ def run_model(ctx: RunnerContext) -> dict[str, Any]:
             "default_dtype", "float64") != dtype:
         raise RunnerValidationError("MACE load_options dtype differs from the frozen dtype")
     environments = ctx.freeze_config["inputs"]["production_evidence"]["runtime_environments"]
-    environment = next(name for name, record in environments.items() if model in record["models"])
+    environment = next((name for name, record in environments.items()
+                        if model in record["models"]), None)
+    if environment is None:
+        raise RunnerValidationError(f"{model} is in no pinned runtime environment")
+    if stage not in PRE_FREEZE_STAGES:
+        require_development_matches_freeze(ctx, model)
     provenance = {"model": model, "weights_sha256": entry["weights_sha256"],
                   "environment": environment,
                   "environment_lock_sha256": environments[environment]["environment_lock"]["sha256"],
@@ -202,10 +257,11 @@ def run_model(ctx: RunnerContext) -> dict[str, Any]:
     checkpoint = str(ctx.checkpoint(model))
     setup_args = (entry, checkpoint, frozen, dtype, capture, provenance)
 
-    def shards(selection, variant):
+    def shards(selection, variant, embed=None):
+        embed = variant == "frozen" if embed is None else embed
         return [({"unit_key": u["unit_key"], "variant": variant},
                  {"unit_key": u["unit_key"], "unit_id": u["unit_id"], "images": images,
-                  "variant": variant, "embed": variant == "frozen"})
+                  "variant": variant, "embed": embed})
                 for u, images in selection]
 
     records = list(ctx.execute(namespace=f"{stage}.ml_neb", units=shards(units, "frozen"),
@@ -215,7 +271,8 @@ def run_model(ctx: RunnerContext) -> dict[str, Any]:
     if stage == "development_ml_neb":
         subset = set(reproducibility_subset([u["unit_id"] for u, _ in units]))
         rerun = ctx.execute(namespace=f"{stage}.reproducibility_rerun",
-                            units=shards([x for x in units if x[0]["unit_id"] in subset], "frozen"),
+                            units=shards([x for x in units if x[0]["unit_id"] in subset], "frozen",
+                                         embed=False),  # compares barriers, not embeddings
                             task=ml_neb_task, identity={**identity, "purpose": "rerun"},
                             setup=ml_neb_worker_setup, setup_args=setup_args, configure_torch=True)
         extra["reproducibility"] = compare_reruns(records, list(rerun.values()))
@@ -225,10 +282,17 @@ def run_model(ctx: RunnerContext) -> dict[str, Any]:
                                   setup=ml_neb_worker_setup, setup_args=setup_args,
                                   configure_torch=True)
         extra["litraj_exact_sensitivity"] = [strip(r) for r in sensitivity.values()]
+        extra["litraj_exact_source_endpoint_cap"] = {
+            "steps": litraj_exact_variant(settings).source_endpoint_steps,
+            "units_reaching_cap": sum(bool(r.get("source_endpoint_cap_reached"))
+                                      for r in sensitivity.values()),
+            "note": "declared deviation: LiTraj's source-endpoint FIRE had no step limit"}
     summary_records = sorted((strip(r) for r in records), key=lambda r: r["unit_key"])
     outputs = {"ml_neb_records": ctx.publish("ml_neb_records.json", {
         "model": model, "stage": stage, "settings": settings.as_json(),
-        "settings_sha256": settings.settings_sha256, "records": summary_records,
+        "settings_sha256": settings.settings_sha256, "dtype": dtype,
+        "capture_report_sha256": None if capture is None else capture["report_sha256"],
+        "records": summary_records,
         "not_attempted": dict(sorted(not_attempted.items())), **extra})}
     statuses: dict[str, int] = {}
     for record in summary_records:
@@ -271,9 +335,10 @@ def deployed_units(ctx: RunnerContext, model: str, records: list[dict[str, Any]]
         support_rows,
         unit_family,
     )
+    from e3sse.production.runners.representation import frozen_path_representation
 
     descriptors = ctx.upstream("descriptor_availability", "descriptors")["units"]
-    branch = ctx.upstream("path_representation", "path_representation")["models"][model]
+    branch = frozen_path_representation(ctx)["models"][model]
     scales = ctx.upstream("family_scale", "family_scales")["scales"][model]
     g1 = bool(ctx.upstream("transfer", "g1_decision")["passes"])
     decisions = support_decisions(branch, support_rows(branch, records, descriptors))

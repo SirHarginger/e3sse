@@ -26,6 +26,7 @@ EXIT_VALIDATION = 3
 STAGE_MANIFEST = "stage_manifest.json"
 MODEL_MANIFEST = "model_manifest.json"
 STAGE_MANIFEST_SCHEMA = "e3sse.production.stage-manifest"
+PREPARE_MANIFEST = "prepare_manifest.json"
 
 
 class MissingEvidence(RuntimeError):
@@ -195,29 +196,23 @@ class RunnerContext:
         publish_json_once(path, value, root=self.run_dir)
         return path
 
-    def write_manifest(self, outputs: Mapping[str, Path], summary: Mapping[str, Any]) -> Path:
-        """The runner's output list with SHA-256, read by the orchestrator."""
-
-        record = {
-            "schema_version": STAGE_MANIFEST_SCHEMA,
-            "stage": self.stage, "model": self.model,
-            "outputs": {name: {"path": str(path), "sha256": file_sha256(path)}
-                        for name, path in sorted(outputs.items())},
-            "summary": dict(summary),
-        }
-        return self.publish(MODEL_MANIFEST if self.model else STAGE_MANIFEST, record)
-
     def upstream(self, stage: str, name: str, *, model: str | None = None) -> Any:
         """A verified JSON output of an earlier stage of this run (fail closed)."""
 
         return load_json(self.upstream_path(stage, name, model=model))
 
-    def upstream_path(self, stage: str, name: str, *, model: str | None = None) -> Path:
-        """The verified path of an earlier stage's output (SHA-256 checked)."""
+    def upstream_path(self, stage: str, name: str, *, model: str | None = None,
+                      phase: str | None = None) -> Path:
+        """The verified path of an earlier stage's output (SHA-256 checked).
+
+        ``phase="prepare"`` reads the stage's prepare-phase manifest (outputs a later
+        phase of the same stage, or another stage, consumes)."""
 
         directory = self.run_dir / stage / ("models/" + model if model else "")
         manifest_path = directory / (MODEL_MANIFEST if model else STAGE_MANIFEST)
-        if not manifest_path.is_file() and not model:
+        if phase == "prepare":
+            manifest_path = self.run_dir / stage / PREPARE_MANIFEST
+        elif not manifest_path.is_file() and not model:
             # Script-driven stages have only the orchestrator's completion record.
             completion = directory / "stage_completion.json"
             if completion.is_file():

@@ -60,12 +60,28 @@ def one_sided_p(values: Sequence[float | None], *, null_at_or_below: float = 0.0
     return sum(v <= null_at_or_below for v in defined) / len(defined)
 
 
-def holm(pvalues: Mapping[str, float | None]) -> dict[str, float | None]:
-    """Holm step-down adjusted p-values (monotone); undefined p stays undefined."""
+def p_resolution(values: Sequence[float | None]) -> dict[str, Any]:
+    """Bootstrap resolution of a percentile p: a p of 0 is reported as < 1/B."""
 
-    defined = sorted(((p, name) for name, p in pvalues.items() if p is not None), key=lambda x: (x[0], x[1]))
+    defined = sum(v is not None and math.isfinite(v) for v in values)
+    p = one_sided_p(values)
+    return {"bootstrap_replicates_defined": defined,
+            "p_below_resolution": p == 0.0,
+            "p_reported_as": None if p is None else (f"< {1 / defined:.6g}" if p == 0.0 else p)}
+
+
+def holm(pvalues: Mapping[str, float | None]) -> dict[str, float]:
+    """Holm step-down adjusted p-values (monotone) over the whole declared family.
+
+    The family size m is every declared member: an undefined p enters as 1 (it can
+    never be rejected) instead of leaving the family, so m is never reduced after the
+    data are seen.  Callers record which members were undefined.
+    """
+
+    defined = sorted(((1.0 if p is None else p, name) for name, p in pvalues.items()),
+                     key=lambda x: (x[0], x[1]))
     m = len(defined)
-    adjusted: dict[str, float | None] = {name: None for name in pvalues}
+    adjusted: dict[str, float] = {}
     running = 0.0
     for rank, (p, name) in enumerate(defined):
         running = max(running, min(1.0, (m - rank) * p))

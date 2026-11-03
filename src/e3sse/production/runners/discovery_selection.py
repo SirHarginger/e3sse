@@ -24,14 +24,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from e3sse.production.runners.context import RunnerContext
+from e3sse.production.runners.context import RunnerContext, RunnerValidationError
 
 CALIBRATION_BARRIERS = "nebdft2k_conformal_calibration_barriers"
 ANALYSIS_ID = "study5_wcs"
 
 
-def funnel_units(population, pool_units, slice_records, bvse_index) -> list[dict[str, Any]]:
-    """Funnel records for every Gate-1 pool unit (Gate 0 passed)."""
+def funnel_units(population, pool_units, slice_records, bvse_index,
+                 test_weights=None) -> list[dict[str, Any]]:
+    """Funnel records for every Gate-1 pool unit (Gate 0 passed); ``weighted`` marks
+    units with a density weight (the only pool units WCS can see)."""
 
     by_key = {u["unit_key"]: u for u in pool_units}
     slice_by_key = {r["unit_key"]: r for r in slice_records}
@@ -52,6 +54,7 @@ def funnel_units(population, pool_units, slice_records, bvse_index) -> list[dict
             failure = record["failure_category"] if record else None
             supported = bool(record and record["supported"])
         units.append({"unit_key": key, "attempted": status is not None,
+                      "weighted": holdout or test_weights is None or key in test_weights,
                       "failure": failure if status is not None and status != "converged" else None,
                       "supported": supported, "selected": False, "weight_fit_holdout": holdout,
                       "not_attempted_reason": None if status is not None else
@@ -82,9 +85,14 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
     tests = [u for u in pool if u["prediction"] is not None and u["unit_key"] in weights["test_weights"]]
     population = ctx.upstream("development_population", "population_manifest")
     slices = ctx.upstream("weight_slice_ml_neb", "ml_neb_records", model=model)["records"]
-    units = funnel_units(population, pool, slices, ctx.upstream("bvse_reproduction", "bvse_path_index"))
-    result: dict[str, Any] = {"model": model, "alpha": alpha, "threshold_eV": threshold}
-    if weights.get("classifier_status") != "converged" or not calibration or not tests:
+    units = funnel_units(population, pool, slices, ctx.upstream("bvse_reproduction", "bvse_path_index"),
+                         test_weights=weights.get("test_weights") or {})
+    result: dict[str, Any] = {"model": model, "alpha": alpha, "threshold_eV": threshold,
+                              "population_exclusions_before_gate1": {
+                                  role: count for role, count in population["counts"].items()
+                                  if role.startswith("excluded_")}}
+    wcs_ran = not (weights.get("classifier_status") != "converged" or not calibration or not tests)
+    if not wcs_ran:
         result["status"] = "not_run: no converged weights or empty calibration/test population"
     else:
         reference = dft_barriers(ctx, [u["unit_id"] for u in calibration], role="train",
@@ -130,7 +138,9 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                       fdr_scope="the predictor-eligible WCS population only",
                       guarantee="approximate FDR control under the stated assumptions "
                                 "(Theorem 3.5); not a confirmed superionic conductor list")
-    result["funnel"] = funnel(units)
+    result["funnel"] = funnel(units, wcs_ran=wcs_ran)
+    if wcs_ran and result["funnel"]["counts"]["wcs_run"] != len(tests):
+        raise RunnerValidationError("funnel WCS population differs from the WCS test units")
     outputs = {"discovery_selection": ctx.publish("discovery_selection.json", result)}
     return {"outputs": outputs, "summary": {"status": result["status"],
                                             "selected": result.get("n_selected")}}

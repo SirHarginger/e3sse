@@ -49,16 +49,27 @@ def frame_sources(ctx: RunnerContext, model: str) -> dict[str, Any]:
     """Per-split frame statistics: train (Study 1), test (transfer), val (this stage)."""
 
     from e3sse.production.runners.family_scale import study1_frame_stats
-    from e3sse.production.runners.frame_scales import FrameStats
-    from e3sse.production.runners.transfer import heldout_source
+    from e3sse.production.runners.frame_scales import aligned_frame_stats
+    from e3sse.production.runners.transfer import TEST_FORCES, heldout_source
+    from e3sse.production.stage_graph import TRAIN_FORCES, VALIDATION_FORCES
     from e3sse.softening.study1_inference import verify_statistics_file
 
-    sources = {"train": study1_frame_stats(ctx, model)}
+    train = study1_frame_stats(ctx, model)
+    ctx.require_outcome(role="train", outcome="study4_training_frame_forces",
+                        outcome_kind=TRAIN_FORCES, unit_ids=train.frame_ids)
+    sources = {"train": train}
+    access = {"test": ("test", TEST_FORCES), "val": ("validation", VALIDATION_FORCES)}
     for split, stage in (("test", "transfer"), ("val", "controlled_selection")):
-        _, reference = verify_statistics_file(ctx.run_dir / stage / f"{split}_frames" / "dft_reference")
-        _, arrays = verify_statistics_file(ctx.run_dir / stage / "models" / model / f"{split}_frames")
         _, _, frames = heldout_source(ctx, split)
-        sources[split] = FrameStats([r["frame_id"] for r in frames], arrays, reference)
+        ids = [r["frame_id"] for r in frames]
+        role, kind = access[split]
+        ctx.require_outcome(role=role, outcome=f"study4_{split}_frame_forces", outcome_kind=kind,
+                            unit_ids=ids)
+        _, reference = verify_statistics_file(ctx.upstream_path(
+            stage, f"{split}_frame_statistics:dft_reference", phase="prepare").parent)
+        _, arrays = verify_statistics_file(ctx.upstream_path(
+            stage, f"{split}_frame_statistics", model=model).parent)
+        sources[split] = aligned_frame_stats(ids, arrays, reference)
     return sources
 
 
@@ -97,7 +108,13 @@ class _Pooled:
 
 def repeat_scales(pooled: _Pooled, membership, population_of, family_of, training_systems,
                   unit_frames, parameters) -> dict[str, Any]:
-    """Global and per-family pooled s for one repeat, with the symmetric fallback."""
+    """Global and per-family pooled s for one repeat, with the symmetric fallback.
+
+    Frozen ``study4_predictor_calibration_independence``: if the training-side stratum
+    lacks minimum support for a scope, s for that scope is fitted on forces only of all
+    calibration and test units of the repeat in that scope (global: every unit; family:
+    the units of that family), applied identically to both sides, never using Y.
+    """
 
     from e3sse.production.runners.family_scale import scale_frames
 
@@ -113,13 +130,73 @@ def repeat_scales(pooled: _Pooled, membership, population_of, family_of, trainin
         result["family"][family] = {**pooled.estimate(
             [r["frame_id"] for r in rows], materials=[r["material_id"] for r in rows],
             parameters=parameters), "source": "training_side_systems_without_nebdft2k_hops"}
-    fallback_frames = sorted({f for frames_ in unit_frames.values() for f, _ in frames_})
-    fallback_materials = sorted({m for frames_ in unit_frames.values() for _, m in frames_})
+    def fallback(pairs):
+        frames_ = sorted({f for f, _ in pairs})
+        return pooled.estimate(frames_, materials=sorted({m for _, m in pairs}),
+                               parameters=parameters)
+
+    every_unit = [pair for frames_ in unit_frames.values() for pair in frames_]
     if result["global"]["s_hat"] is None:
-        result["global"] = {**pooled.estimate(fallback_frames, materials=fallback_materials,
-                                               parameters=parameters),
-                             "source": "symmetric_fallback_all_units_forces"}
+        result["global"] = {**fallback(every_unit), "source": "symmetric_fallback_all_units_forces"}
+    unit_families = {family_of[m] for _, m in every_unit if m in family_of}
+    for family in sorted(unit_families):
+        if (result["family"].get(family) or {}).get("s_hat") is None:
+            pairs = [(f, m) for f, m in every_unit if family_of.get(m) == family]
+            result["family"][family] = {**fallback(pairs),
+                                        "source": "symmetric_fallback_family_units_forces"}
     return result
+
+
+def _repeat_se(rows, key: str) -> float | None:
+    """Monte Carlo s.e. across partitions (the dependence unit): SD of repeat means / sqrt(R)."""
+
+    import numpy as np
+
+    by_repeat = defaultdict(list)
+    for r in rows:
+        if r[key] is not None:
+            by_repeat[r["repeat"]].append(r[key])
+    means = [float(np.mean(v)) for v in by_repeat.values()]
+    return float(np.std(means, ddof=1) / np.sqrt(len(means))) if len(means) >= 2 else None
+
+
+def h5b_power_differences(records, contract, *, seed: int, resamples: int) -> dict[str, Any]:
+    """H5b (SRT increases power; supported if paired CI > 0): per draw the power of an SRT
+    predictor minus raw on the identical units, averaged per repeat; the CI resamples the
+    repeats (partitions are the dependence unit)."""
+
+    import numpy as np
+
+    from e3sse.production.runners.inference_stats import cluster_bootstrap, percentile_interval
+
+    key = lambda r: (r["repeat"], r["draw"], r["c_eV"], r["alpha"], r["method"])
+    raw = {key(r): r["power"] for r in records if r["predictor"] == "raw"}
+    out = {}
+    for predictor in PREDICTORS[1:]:
+        for c in contract["threshold_eV"]:
+            for alpha in contract["alpha"]:
+                for method in ("BH", "BY"):
+                    by_repeat = defaultdict(list)
+                    for r in records:
+                        if (r["predictor"], r["c_eV"], r["alpha"], r["method"]) != (
+                                predictor, c, alpha, method):
+                            continue
+                        base = raw.get(key(r))
+                        if r["power"] is not None and base is not None:
+                            by_repeat[r["repeat"]].append(r["power"] - base)
+                    repeats = sorted(by_repeat)
+                    means = np.asarray([np.mean(by_repeat[k]) for k in repeats])
+                    interval = None
+                    if len(repeats) >= 2:
+                        interval = percentile_interval(cluster_bootstrap(
+                            [str(k) for k in repeats], lambda idx, m=means: float(m[idx].mean()),
+                            seed=seed, resamples=resamples))
+                    lower = (interval or {}).get("low")
+                    out[f"{predictor}-raw|c={c}|alpha={alpha}|{method}"] = {
+                        "mean_power_difference": float(means.mean()) if means.size else None,
+                        "ci95": interval, "repeats": len(repeats),
+                        "supported": lower is not None and lower > 0}
+    return out
 
 
 def run(ctx: RunnerContext) -> dict[str, Any]:
@@ -176,7 +253,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                     parameters=parameters) if frames else None
             return cache[key]
 
-        records = []
+        records, undefined_draws = [], 0
         for partition in partitions:
             repeat = int(partition["repeat_index"])
             calibration_systems = set(partition["training_or_calibration_chemical_systems"])
@@ -231,11 +308,15 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                                                 study4_draw_seed(constants["base_seed"], repeat, draw))
                 cal = [h for s, h in sorted(drawn.items()) if s in calibration_systems]
                 test = [h for s, h in sorted(drawn.items()) if s in test_systems]
+                # paired_identical_units: every predictor on the same units of this draw
+                cal_ok = [h for h in cal if all(h in predictions[q] for q in PREDICTORS)]
+                test_ok = [h for h in test if all(h in predictions[q] for q in PREDICTORS)]
+                dropped = (len(cal) - len(cal_ok), len(test) - len(test_ok))
+                if not cal_ok or not test_ok:
+                    undefined_draws += 1
+                    continue
                 for predictor in PREDICTORS:
                     p = predictions[predictor]
-                    cal_ok, test_ok = [h for h in cal if h in p], [h for h in test if h in p]
-                    if not cal_ok or not test_ok:
-                        continue
                     test_y = [y[h] for h in test_ok]
                     for c in contract["threshold_eV"]:
                         pvalues = conformal_pvalues([p[h] for h in cal_ok], [y[h] for h in cal_ok],
@@ -247,6 +328,8 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                                     ("naive", np.asarray([p[h] < c for h in test_ok]))):
                                 records.append({"repeat": repeat, "draw": draw, "predictor": predictor,
                                                 "c_eV": c, "alpha": alpha, "method": method,
+                                                "dropped_calibration_units": dropped[0],
+                                                "dropped_test_units": dropped[1],
                                                 **selection_outcome(mask, test_y, c)})
         summary = {}
         for predictor in PREDICTORS:
@@ -263,14 +346,21 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                         power = [r["power"] for r in rows if r["power"] is not None]
                         summary[key] = {"realized_fdr": fdr,
                                         "mean_power": float(np.mean(power)) if power else None,
+                                        "power_mc_se": _repeat_se(rows, "power"),
                                         "mean_selection_size": float(np.mean([r["selection_size"]
                                                                               for r in rows]))
                                         if rows else None,
                                         "zero_selection_fraction": float(np.mean(
                                             [r["selection_size"] == 0 for r in rows])) if rows else None}
-        results[model] = {"summary": summary, "draw_records": records}
+        results[model] = {"summary": summary, "draw_records": records,
+                          "undefined_draws": undefined_draws,
+                          "h5b": h5b_power_differences(records, contract, seed=analysis_seed(
+                              constants["base_seed"], "cluster_bootstrap", "study4", "H5b", model),
+                              resamples=constants["bootstrap_resamples"])}
     outputs = {"study4_selection": ctx.publish("study4_selection.json", {
         "results": {m: r["summary"] for m, r in results.items()},
+        "h5b": {m: r["h5b"] for m, r in results.items()},
+        "undefined_draws": {m: r["undefined_draws"] for m, r in results.items()},
         "g4_rule": "realised FDR <= alpha + 2 MC s.e. (validity check, not superiority)",
         "predictor_independence": "pooled s from training-side systems without nebDFT2k hops "
                                   "per repeat; symmetric Y-free gate thresholds per repeat"}),

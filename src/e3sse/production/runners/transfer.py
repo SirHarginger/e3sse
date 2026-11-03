@@ -34,16 +34,21 @@ from e3sse.production.runners.context import (
     MissingEvidence,
     RunnerContext,
     RunnerValidationError,
+    canonical_sha256,
 )
 
 TEST_FORCES = "mplitrj_test_side_nonpath_forces"
+TRAIN_NONPATH_FORCE = "mplitrj_nonpath_dft_force"  # PILOT_TUNING_OUTCOME_KINDS
 OWN_PATH = "mplitrj_own_path_forces_oracle"
 EVALUATION_BARRIERS = "nebdft2k_fixed_geometry_evaluation_barriers"
 SINGLE_POINT_NAMESPACE = "transfer.single_points"
 HOPS_PER_SHARD = 8
 CODE_FILES = ("src/e3sse/production/runners/transfer.py",
               "src/e3sse/production/runners/frame_scales.py",
-              "src/e3sse/softening/study1_inference.py", "src/e3sse/protocol/adapters.py")
+              "src/e3sse/production/runners/hop_files.py",
+              "src/e3sse/softening/study1_inference.py", "src/e3sse/softening/extxyz_frames.py",
+              "src/e3sse/softening/frame_statistics.py", "src/e3sse/barriers/ml_neb.py",
+              "src/e3sse/protocol/adapters.py")
 
 
 # ===================================================================== inputs
@@ -68,11 +73,32 @@ def heldout_source(ctx: RunnerContext, split: str = "test"
     source = mplitrj_source(ctx.parent_protocol, name)
     if source.get("published_split") != split:
         raise RunnerValidationError(f"{name} is not the published-{split} source")
-    frames = sorted((dict(r) for r in ctx.membership if r.get("record_kind") == "mplitrj_frame"
-                     and r.get("published_split") == split
-                     and str(r["frame_id"]).startswith(f"{name}:")),
-                    key=lambda r: r["source_frame_index"])
+    frames = split_frames(ctx.membership, source, split)
     return source, (ctx.data_root / source["identifier"]).resolve(), frames
+
+
+def split_frames(records, source: dict[str, Any], split: str) -> list[dict[str, Any]]:
+    """Frozen frames of one published split's source, with the same identity checks as
+    Study 1's ``published_train_frames``: frame ID, source SHA-256, provenance index,
+    and exactly the source's frame count (every frame of that split is in this file)."""
+
+    name = Path(source["identifier"]).name
+    frames = sorted((dict(r) for r in records if r.get("record_kind") == "mplitrj_frame"
+                     and r.get("published_split") == split
+                     and str(r.get("frame_id", "")).startswith(f"{name}:")),
+                    key=lambda r: r["source_frame_index"])
+    for row in frames:
+        index = row["source_frame_index"]
+        if (type(index) is not int or not 0 <= index < source["frames"]
+                or row["frame_id"] != f"{name}:{index}"
+                or row.get("source_file_sha256") != source["sha256"]
+                or row.get("provenance_index_id") != source["provenance_index_id"]):
+            raise RunnerValidationError(f"frozen frame identity is inconsistent: {row['frame_id']}")
+    everywhere = sum(1 for r in records if r.get("record_kind") == "mplitrj_frame"
+                     and r.get("published_split") == split)
+    if everywhere != len(frames) or len(frames) != source["frames"]:
+        raise RunnerValidationError(f"published-{split} frames are not exactly the frames of {name}")
+    return frames
 
 
 def test_source(ctx: RunnerContext):
@@ -160,13 +186,15 @@ def single_point_task(payload: dict[str, Any], context: dict[str, Any]) -> dict[
 
     from ase import Atoms
 
+    from e3sse.barriers.ml_neb import _is_allocator_oom
     from e3sse.production.runners.hop_files import read_geometry
+    from e3sse.softening.study1_inference import _resource_failure
 
     calc = context["calc"]
     hops = []
-    for hop_id, path in payload["hops"]:
+    for hop_id, path, digest in payload["hops"]:
         energies, status, detail = [], "success", None
-        for frame in read_geometry(Path(path)):
+        for frame in read_geometry(Path(path), digest):
             atoms = Atoms(numbers=frame["numbers"], positions=frame["positions"],
                           cell=frame["cell"], pbc=frame["pbc"])
             atoms.calc = calc
@@ -175,13 +203,15 @@ def single_point_task(payload: dict[str, Any], context: dict[str, Any]) -> dict[
             except (MemoryError, OSError):
                 raise
             except Exception as exc:  # a model failure on an image is the hop's status
+                if _resource_failure(exc) or _is_allocator_oom(exc):
+                    raise MemoryError(str(exc)) from exc  # host, not model: never checkpointed
                 status, detail = "failed", f"{type(exc).__name__}: {exc}"[:500]
                 break
             if not math.isfinite(energy):
                 status, detail = "failed", "non-finite ML energy"
                 break
             energies.append(energy)
-        hops.append({"hop_id": hop_id, "status": status, "detail": detail,
+        hops.append({"hop_id": hop_id, "relaxed_sha256": digest, "status": status, "detail": detail,
                      "ml_image_energies_eV": energies if status == "success" else None})
     return {"hops": hops}
 
@@ -190,23 +220,24 @@ def model_frames_and_points(ctx: RunnerContext, *, splits: tuple[str, ...],
                             frame_split: str) -> dict[str, Any]:
     """Single points on the relaxed images of ``splits`` hops; ``frame_split`` frame stats."""
 
-    from e3sse.production.runners.hop_files import nebdft2k_files
+    from e3sse.production.runners.gate1_tables import pinned_g0_inputs
+    from e3sse.production.runners.hop_files import RELAXED, verified_nebdft2k
     from e3sse.softening import study1_inference as inference
 
     model = ctx.model
     entry = ctx.models[model]
     checkpoint = str(ctx.checkpoint(model))
-    files = nebdft2k_files(ctx.data_root / "raw")
     hops = universe_hops(ctx.membership, splits)
-    missing = [h["hop_id"] for h in hops if "relaxed" not in files.get(h["hop_id"], {})]
-    if missing:
-        raise MissingEvidence(f"{len(missing)} hops lack <edge_id>_relaxed.xyz, e.g. {missing[0]}")
+    files = verified_nebdft2k(ctx.data_root / "raw", pinned_g0_inputs(ctx.freeze_config),
+                              [h["hop_id"] for h in hops], RELAXED)
     identity = {"code_sha256": ctx.code_sha256(CODE_FILES), "weights_sha256": entry["weights_sha256"]}
     units = []
     for start in range(0, len(hops), HOPS_PER_SHARD):
         block = hops[start: start + HOPS_PER_SHARD]
-        units.append(({"hop_ids": [h["hop_id"] for h in block]},
-                      {"hops": [[h["hop_id"], str(files[h["hop_id"]]["relaxed"])] for h in block]}))
+        units.append(({"hop_ids": [h["hop_id"] for h in block],
+                       "relaxed_sha256": [files[h["hop_id"]]["sha256"] for h in block]},
+                      {"hops": [[h["hop_id"], files[h["hop_id"]]["path"],
+                                 files[h["hop_id"]]["sha256"]] for h in block]}))
     results = ctx.execute(namespace=SINGLE_POINT_NAMESPACE, units=units, task=single_point_task,
                           identity=identity, setup=single_point_setup,
                           setup_args=(entry, checkpoint), configure_torch=True)
@@ -255,10 +286,13 @@ def dft_barriers_unchecked(ctx: RunnerContext, hop_ids: list[str]) -> dict[str, 
     """The read itself; callers must have been granted ``require_outcome`` first."""
 
     from e3sse.barriers.fixed_geometry import barrier
-    from e3sse.production.runners.hop_files import nebdft2k_files, read_labelled
+    from e3sse.production.runners.gate1_tables import pinned_g0_inputs
+    from e3sse.production.runners.hop_files import RELAXED, read_labelled, verified_nebdft2k
 
-    files = nebdft2k_files(ctx.data_root / "raw")
-    return {h: barrier([f["energy_eV"] for f in read_labelled(files[h]["relaxed"])])
+    files = verified_nebdft2k(ctx.data_root / "raw", pinned_g0_inputs(ctx.freeze_config),
+                              list(hop_ids), RELAXED)
+    return {h: barrier([f["energy_eV"] for f in read_labelled(Path(files[h]["path"]),
+                                                               files[h]["sha256"])])
             for h in hop_ids}
 
 
@@ -290,19 +324,34 @@ def study1_pooled(estimates: list[dict], model: str) -> dict[str, Any]:
     return pooled
 
 
-def gate_thresholds_from_training(ctx: RunnerContext, model: str, train_hops, quantile: float,
+def primary_train_hops(ctx: RunnerContext) -> list[dict[str, Any]]:
+    population_of = ctx.partition_manifest["primary_population"]["assignment_by_chemical_system"]
+    return [h for h in universe_hops(ctx.membership) if h["published_split"] == "train"
+            and population_of.get(h["chemical_system_id"]) == "primary"]
+
+
+def training_endpoint_diagnostics(ctx: RunnerContext, model: str, train_hops,
                                   constants) -> dict[str, Any]:
-    """Regime-matched thresholds: published-train hops, s_scope frames, one value per material."""
+    """Per-material diagnostics on published-train primary hops, s_scope (endpoint-
+    relaxation, non-path) frames only, one value per material: the regime-matched basis
+    of the deployment-gate thresholds and of the pilot's MDE scales.  Read with purpose
+    ``threshold_selection`` (frozen ``deployment_gate.threshold_access``)."""
 
     from e3sse.production.runners.family_scale import study1_frame_stats
     from e3sse.production.runners.frame_scales import hop_diagnostics, scope_frames
     from e3sse.protocol.partitions import analysis_seed
-    from e3sse.softening.applicability import gate_thresholds
 
     stats = study1_frame_stats(ctx, model)
+    # Frame selection is identity-only (membership and the statistics' frame IDs).
     frames = scope_frames(protocol=ctx.parent_protocol, membership=ctx.membership, hops=train_hops,
                           available=set(stats.row), partition="published",
                           side="training_or_calibration")
+    used = sorted({f for hop in train_hops for f in frames[hop["hop_id"]]})
+    if not used:
+        raise MissingEvidence(f"{model}: no published-train endpoint frames for the thresholds")
+    ctx.require_outcome(role="train", outcome="training_endpoint_frame_forces",
+                        outcome_kind=TRAIN_NONPATH_FORCE, unit_ids=used,
+                        purpose="threshold_selection")
     per_material: dict[str, Any] = {}
     for hop in train_hops:
         material = hop["material_id"]
@@ -314,8 +363,18 @@ def gate_thresholds_from_training(ctx: RunnerContext, model: str, train_hops, qu
                                resamples=constants["bootstrap_resamples"],
                                parameters=constants["support"])
         per_material[material] = {"supported": diag["estimates"]["all"]["supported"],
-                                  "rho_F": diag["rho_F"],
+                                  "s_hat": diag["s_hat"], "rho_F": diag["rho_F"],
                                   "scale_uncertainty": diag["scale_uncertainty"]}
+    return {"per_material": per_material, "frame_ids": used}
+
+
+def gate_thresholds_from_training(ctx: RunnerContext, model: str, train_hops, quantile: float,
+                                  constants) -> dict[str, Any]:
+    """Regime-matched thresholds: published-train hops, s_scope frames, one value per material."""
+
+    from e3sse.softening.applicability import gate_thresholds
+
+    per_material = training_endpoint_diagnostics(ctx, model, train_hops, constants)["per_material"]
     materials = sorted(per_material)
     thresholds = gate_thresholds(
         {"rho_F": [per_material[m]["rho_F"] for m in materials],
@@ -331,6 +390,7 @@ def paired_bootstrap(hops, raw, srt, reference, clusters, *, seed, resamples) ->
     from e3sse.production.runners.inference_stats import (
         cluster_bootstrap,
         one_sided_p,
+        p_resolution,
         percentile_interval,
     )
 
@@ -349,20 +409,33 @@ def paired_bootstrap(hops, raw, srt, reference, clusters, *, seed, resamples) ->
     diff_values = cluster_bootstrap(clusters, mae_difference, seed=seed, resamples=resamples)
     return {"rho_srt_ci95": percentile_interval(rho_values),
             "rho_srt_one_sided_p": one_sided_p(rho_values),
+            "rho_srt_p_resolution": p_resolution(rho_values),
             "mae_reduction_ci95": percentile_interval(diff_values)}
 
 
-def label_budget_downstream(stats, frames_by_hop, hops, raw, reference, *, constants, settings) -> dict:
-    """amendments.label_budget_downstream on the evaluation hops (N >= 60 frames)."""
+LABEL_BUDGET_MIN_FRAMES = 60  # parent label-budget population rule (N >= 60)
+LABEL_BUDGET_MIN_HOPS = 20
+
+
+def label_budget_hops(frames_by_hop, hops, raw) -> list[dict[str, Any]]:
+    """The label-free label-budget hop set (frozen before any barrier is read)."""
+
+    return [h for h in hops if len(frames_by_hop.get(h["hop_id"], [])) >= LABEL_BUDGET_MIN_FRAMES
+            and h["hop_id"] in raw]
+
+
+def label_budget_downstream(stats, frames_by_hop, eligible, raw, reference, *, constants,
+                            settings) -> dict:
+    """amendments.label_budget_downstream on the frozen hop set: per hop the mean over
+    Monte Carlo draws, then over hops; the chemical-system cluster bootstrap resamples
+    hops with their draws (draws nested inside the bootstrap)."""
 
     import numpy as np
 
+    from e3sse.production.runners.inference_stats import cluster_bootstrap, percentile_interval
     from e3sse.protocol.partitions import analysis_seed
     from e3sse.softening.frame_statistics import draw_without_replacement
 
-    minimum_frames = 60
-    eligible = [h for h in hops if len(frames_by_hop.get(h["hop_id"], [])) >= minimum_frames
-                and h["hop_id"] in raw and h["hop_id"] in reference]
     rows = []
     for K in settings["k"]:
         per_hop = []
@@ -371,36 +444,56 @@ def label_budget_downstream(stats, frames_by_hop, hops, raw, reference, *, const
             sums = stats.sums["all"][frame_rows]
             full = sums[:, 1].sum()
             s_full = sums[:, 0].sum() / full if full > 0 else None
-            errors, gaps, defined = [], [], 0
+            errors, gaps, defined, zero = [], [], 0, 0
             for repeat in range(settings["repeats"]):
                 seed = analysis_seed(constants["base_seed"], "study1_label_budget", "material",
                                      hop["material_id"], hop["hop_id"], K, repeat)
                 drawn = sums[np.asarray(draw_without_replacement(seed, len(frame_rows), K))]
                 sxx = drawn[:, 1].sum()
-                s_k = drawn[:, 0].sum() / sxx if sxx > 0 else None
-                if s_k is None or s_k <= 0:
+                if sxx == 0:  # zero Eq. 17 denominator: an error (parent rule), counted
+                    zero += 1
+                    continue
+                s_k = drawn[:, 0].sum() / sxx
+                if s_k <= 0:  # undefined for SRT, never imputed
                     continue
                 defined += 1
                 errors.append(abs(raw[hop["hop_id"]] / s_k - reference[hop["hop_id"]]))
                 if s_full is not None:
                     gaps.append(abs(s_k - s_full))
-            per_hop.append({"hop_id": hop["hop_id"], "defined_fraction": defined / settings["repeats"],
+            per_hop.append({"hop_id": hop["hop_id"], "cluster": hop["chemical_system_id"],
+                            "defined_fraction": defined / settings["repeats"],
+                            "zero_denominator_draws": zero,
                             "mean_abs_error_eV": float(np.mean(errors)) if errors else None,
                             "mean_abs_s_gap": float(np.mean(gaps)) if gaps else None})
-        values = [p["mean_abs_error_eV"] for p in per_hop if p["mean_abs_error_eV"] is not None]
+        scored = [p for p in per_hop if p["mean_abs_error_eV"] is not None]
+        values = np.asarray([p["mean_abs_error_eV"] for p in scored])
+        interval = None
+        if len(scored) >= 2:
+            interval = percentile_interval(cluster_bootstrap(
+                [p["cluster"] for p in scored], lambda idx, v=values: float(v[idx].mean()),
+                seed=analysis_seed(constants["base_seed"], "cluster_bootstrap", "study2a",
+                                   "label_budget", K),
+                resamples=constants["bootstrap_resamples"]))
         rows.append({"K": K, "hops": len(per_hop),
-                     "mean_abs_srt_error_eV": float(np.mean(values)) if values else None,
-                     "median_abs_srt_error_eV": float(np.median(values)) if values else None,
+                     "mean_abs_srt_error_eV": float(values.mean()) if values.size else None,
+                     "mean_abs_srt_error_ci95": interval,
+                     "median_abs_srt_error_eV": float(np.median(values)) if values.size else None,
+                     "zero_denominator_draws": sum(p["zero_denominator_draws"] for p in per_hop),
                      "mean_defined_fraction": float(np.mean([p["defined_fraction"] for p in per_hop]))
                      if per_hop else None, "per_hop": per_hop})
-    return {"qualifying_hops": len(eligible), "descriptive_only": len(eligible) < 20, "rows": rows}
+    return {"qualifying_hops": len(eligible),
+            "descriptive_only": len(eligible) < LABEL_BUDGET_MIN_HOPS, "rows": rows}
 
 
 def run(ctx: RunnerContext) -> dict[str, Any]:
     from e3sse.barriers.fixed_geometry import common_population, metrics, rho_srt, srt_barrier
-    from e3sse.production.runners.frame_scales import FrameStats, hop_diagnostics, scope_frames
+    from e3sse.production.runners.frame_scales import (
+        aligned_frame_stats,
+        hop_diagnostics,
+        scope_frames,
+    )
     from e3sse.production.runners.inference_stats import holm
-    from e3sse.production.runners.pilot import eligible_models, study1_tables
+    from e3sse.production.runners.pilot import pilot_eligible_models, study1_tables
     from e3sse.protocol.partitions import analysis_seed
     from e3sse.softening.applicability import gate_decision
     from e3sse.softening.study1_inference import verify_statistics_file
@@ -416,29 +509,44 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
     family_of = ctx.partition_manifest["anion_families"]["assignment_by_material"]
     hops = universe_hops(ctx.membership)
     evaluation = [h for h in hops if h["published_split"] == "test"]
-    train = [h for h in hops if h["published_split"] == "train"
-             and population_of.get(h["chemical_system_id"]) == "primary"]
-    estimates, summary = study1_tables(ctx)
-    eligible = eligible_models(ctx, summary)
-    reference = dft_barriers(ctx, [h["hop_id"] for h in evaluation], role="test",
-                             kind=EVALUATION_BARRIERS)
-    _, ref_arrays = verify_statistics_file(ctx.stage_dir / "test_frames" / "dft_reference")
+    train = primary_train_hops(ctx)
+    estimates, _ = study1_tables(ctx)
+    eligible = pilot_eligible_models(ctx)  # fixed by the pilot amendment, never recomputed
+    _, ref_arrays = verify_statistics_file(ctx.upstream_path(
+        "transfer", "test_frame_statistics:dft_reference", phase="prepare").parent)
     _, _, test_frames = test_source(ctx)
     frame_ids = [r["frame_id"] for r in test_frames]
-    records, hop_records, results = [], [], {}
+    primary = {h["hop_id"] for h in evaluation
+               if population_of.get(h["chemical_system_id"]) == "primary"}
+    clusters_of = {h["hop_id"]: h["chemical_system_id"] for h in evaluation}
+    evaluation_ids = [h["hop_id"] for h in evaluation]
+    # Phase A (label-free): predictions, gates and every hop set, frozen and published
+    # before the evaluation barriers are read.
+    label_free: dict[str, Any] = {}
     for model in sorted(ctx.models):
         single_points = ctx.upstream("transfer", "single_points", model=model)["hops"]
-        _, model_arrays = verify_statistics_file(ctx.stage_dir / "models" / model / "test_frames")
-        stats = FrameStats(frame_ids, model_arrays, ref_arrays)
+        _, model_arrays = verify_statistics_file(ctx.upstream_path(
+            "transfer", "test_frame_statistics", model=model).parent)
+        stats = aligned_frame_stats(frame_ids, model_arrays, ref_arrays)
         b3_frames = scope_frames(protocol=parent, membership=ctx.membership, hops=evaluation,
                                  available=set(stats.row), partition="published", side="test")
         oracle_frames = scope_frames(protocol=parent, membership=ctx.membership, hops=evaluation,
                                      available=set(stats.row), partition="published", side="test",
                                      estimator_kind="oracle")
-        raw = raw_barriers(single_points, reference)
+        raw = raw_barriers(single_points, evaluation_ids)
         pooled = study1_pooled(estimates, model)
         gate = gate_thresholds_from_training(ctx, model, train, quantile, constants)
+        scope_gate = {}
+        for scope, value in [("global", pooled["global"] or {}),
+                             *[(f"family:{f}", v) for f, v in sorted(pooled["family"].items())]]:
+            passes, reasons = gate_decision(
+                supported=value.get("s_hat") is not None,
+                diagnostics={"rho_F": value.get("rho_F"),
+                             "scale_uncertainty": value.get("scale_uncertainty")},
+                thresholds=gate["thresholds"])
+            scope_gate[scope] = {"passes": passes, "reasons": reasons}
         predictions: dict[str, dict[str, float]] = defaultdict(dict)
+        hop_rows = []
         for hop in evaluation:
             h = hop["hop_id"]
             if h not in raw:
@@ -457,9 +565,13 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                 diagnostics={"rho_F": diag["rho_F"] if diag else None,
                              "scale_uncertainty": diag["scale_uncertainty"] if diag else None},
                 thresholds=gate["thresholds"])
-            values = {"B0_raw": raw[h],
-                      "B1_srt_global": srt_barrier(raw[h], (pooled["global"] or {}).get("s_hat")),
-                      "B2_srt_family": srt_barrier(raw[h], pooled["family"].get(family, {}).get("s_hat")),
+            b1 = srt_barrier(raw[h], (pooled["global"] or {}).get("s_hat"))
+            b2 = srt_barrier(raw[h], pooled["family"].get(family, {}).get("s_hat"))
+            values = {"B0_raw": raw[h], "B1_srt_global": b1, "B2_srt_family": b2,
+                      # scope-level switch (frozen gated_global_family), never a per-hop gate
+                      "B1_srt_global_gated_scope": b1 if scope_gate["global"]["passes"] else raw[h],
+                      "B2_srt_family_gated_scope": b2 if scope_gate.get(
+                          f"family:{family}", {}).get("passes") else raw[h],
                       "B3_srt_material": srt_barrier(raw[h], s3),
                       "B4_srt_gated_selective": srt_barrier(raw[h], s3) if passes else None,
                       "B4_srt_gated_correct_or_raw": srt_barrier(raw[h], s3) if passes else raw[h],
@@ -469,26 +581,46 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
             for method, value in values.items():
                 if value is not None:
                     predictions[method][h] = value
-            hop_records.append({
+            hop_rows.append({
                 "model": model, "hop_id": h, "chemical_system": hop["chemical_system_id"],
                 "material_id": hop["material_id"], "population": population_of.get(
-                    hop["chemical_system_id"]), "raw_barrier_eV": raw[h],
-                "dft_barrier_eV": reference[h], "s_material": s3,
+                    hop["chemical_system_id"]), "raw_barrier_eV": raw[h], "s_material": s3,
                 "srt_material_eV": values["B3_srt_material"], "gate_passes": passes,
                 "gate_reasons": reasons,
                 "scores": {k: diag[k] if diag else None for k in
                            ("rho_F", "scale_uncertainty", "li_host_disagreement", "energy_dependence")},
                 "undefined_reasons": diag["undefined_reasons"] if diag else {"all": "no_s_scope_frames"},
                 "n_s_scope_frames": len(b3_frames[h])})
-        primary = {h["hop_id"] for h in evaluation if population_of.get(h["chemical_system_id"]) == "primary"}
-        clusters_of = {h["hop_id"]: h["chemical_system_id"] for h in evaluation}
+        populations = {}
+        for method, values in sorted(predictions.items()):
+            if method != "B0_raw":
+                populations[method] = common_population(
+                    {"B0_raw": [h for h in predictions["B0_raw"] if h in primary],
+                     method: [h for h in values if h in primary]}, label=f"{model}:{method}")
+        label_free[model] = {
+            "stats": stats, "b3_frames": b3_frames, "raw": raw, "gate": gate,
+            "scope_gate": scope_gate, "predictions": predictions, "hop_rows": hop_rows,
+            "populations": populations,
+            "label_budget_hops": label_budget_hops(
+                b3_frames, [h for h in evaluation if h["hop_id"] in primary], raw)}
+    hop_sets = {model: {"method_populations": {m: p["hop_ids"] for m, p in v["populations"].items()},
+                        "label_budget_hops": [h["hop_id"] for h in v["label_budget_hops"]]}
+                for model, v in sorted(label_free.items())}
+    hop_sets_path = ctx.publish("transfer_hop_sets.json", {
+        "frozen_before_barrier_read": True, "hop_sets": hop_sets,
+        "hop_sets_sha256": canonical_sha256(hop_sets)})
+    # Phase B: the evaluation barriers (outcome read, gated) and every metric.
+    reference = dft_barriers(ctx, evaluation_ids, role="test", kind=EVALUATION_BARRIERS)
+    records, hop_records, results = [], [], {}
+    for model, state in sorted(label_free.items()):
+        predictions, populations = state["predictions"], state["populations"]
+        hop_records.extend({**row, "dft_barrier_eV": reference[row["hop_id"]]}
+                           for row in state["hop_rows"])
         per_method = {}
         for method, values in sorted(predictions.items()):
             if method == "B0_raw":
                 continue
-            population = common_population({"B0_raw": [h for h in predictions["B0_raw"] if h in primary],
-                                            method: [h for h in values if h in primary]},
-                                           label=f"{model}:{method}")
+            population = populations[method]
             if not population["hop_ids"]:
                 per_method[method] = {"population": population, "status": "empty_common_population"}
                 continue
@@ -499,6 +631,13 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                 "rho_srt": rho_srt(predictions["B0_raw"], values, reference, population),
                 "role": ("oracle_upper_bound_never_primary" if method.startswith("B6")
                          else "secondary_diagnostic" if method.startswith("element") else "deployable")}
+        selective = per_method.get("B4_srt_gated_selective", {})
+        b3_population = populations.get("B3_srt_material", {}).get("hop_ids", [])
+        if selective.get("population", {}).get("hop_ids") and b3_population:
+            same = selective["population"]
+            selective["b3_on_same_hops"] = metrics(predictions["B3_srt_material"], reference, same,
+                                                   thresholds_eV)
+            selective["coverage_of_b3_population"] = len(same["hop_ids"]) / len(b3_population)
         p1 = per_method.get("B3_srt_material", {})
         if p1.get("population", {}).get("hop_ids"):
             hop_ids = p1["population"]["hop_ids"]
@@ -507,22 +646,25 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                 [clusters_of[h] for h in hop_ids],
                 seed=analysis_seed(constants["base_seed"], "cluster_bootstrap", "study2a", "P1",
                                    "published"), resamples=constants["bootstrap_resamples"])
-        results[model] = {"methods": per_method, "deployment_gate": gate,
+        results[model] = {"methods": per_method, "deployment_gate": state["gate"],
+                          "gated_scope_switch": state["scope_gate"],
                           "label_budget_downstream": label_budget_downstream(
-                              stats, b3_frames, [h for h in evaluation if h["hop_id"] in primary],
-                              raw, reference, constants=constants,
+                              state["stats"], state["b3_frames"], state["label_budget_hops"],
+                              state["raw"], reference, constants=constants,
                               settings={"k": amendments["label_budget_downstream"]["k"],
                                         "repeats": int(parent["study_1_contract"][
                                             "label_budget_stability"]["repeat_count"])})}
         for method, values in predictions.items():
             for h, value in values.items():
                 records.append({"model": model, "method": method, "hop_id": h,
+                                "population": population_of.get(clusters_of[h]),
                                 "predicted_eV": value, "dft_eV": reference[h]})
     p_values = {m: results[m]["methods"].get("B3_srt_material", {}).get("bootstrap", {}).get(
         "rho_srt_one_sided_p") for m in eligible}
     adjusted = holm(p_values)
     endpoints = {m: {"rho_srt": results[m]["methods"].get("B3_srt_material", {}).get("rho_srt"),
-                     "p_one_sided": p_values[m], "p_holm": adjusted[m], "s_bar": eligible[m]}
+                     "p_one_sided": p_values[m], "p_holm": adjusted[m], "s_bar": eligible[m],
+                     "p_undefined_entered_as_1": p_values[m] is None}
                  for m in eligible}
     g1 = any((e["rho_srt"] or -math.inf) >= 0.10 for e in endpoints.values())
     decision = {"gate": "G1", "rule": "rho_SRT >= 0.10 for at least one Group-A model with "
@@ -533,5 +675,6 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                    "noise_floor": "not available: no symmetry-equivalent image energies in nebDFT2k"}),
                "transfer_predictions": ctx.publish("derived/transfer_predictions.json", records),
                "transfer_hop_records": ctx.publish("transfer_hop_records.json", hop_records),
-               "g1_decision": ctx.publish("g1_decision.json", decision)}
+               "g1_decision": ctx.publish("g1_decision.json", decision),
+               "transfer_hop_sets": hop_sets_path}
     return {"outputs": outputs, "summary": {"G1_passes": g1, "P1": endpoints}}
