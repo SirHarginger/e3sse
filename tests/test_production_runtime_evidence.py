@@ -79,6 +79,8 @@ def test_runtime_audit_script_records_frozen_neb_identity(tmp_path):
         "raising_calculator": "calculator_exception", "non_finite_calculator": "non_finite_value"}
     assert report["passed"] is True
     assert report["checks"]["neb_constructor"]["method"] == "ImprovedTangentMethod"
+    assert report["checks"]["neb_import_compatibility"] in {
+        "native", "scipy_cumulative_trapezoid_alias"}
     assert report["checks"]["reference_neb"]["deterministic_repeat"] is True
     again = subprocess.run([*command, "--resume"], env=ENV, capture_output=True, text=True,
                      check=False)

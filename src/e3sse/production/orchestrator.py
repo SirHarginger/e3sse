@@ -253,10 +253,12 @@ class RunContext:
         return Path(self.config["runtime"]["checkpoint_map"]).expanduser()
 
     def checkpoint(self, model: str) -> Path:
-        mapping = _load_json(self.checkpoint_map())
-        if model not in mapping:
-            raise StageBlocked(BLOCKED_MISSING_EVIDENCE, f"checkpoint map lacks {model}")
-        return Path(mapping[model]).expanduser()
+        from e3sse.production.checkpoints import CheckpointInventoryError, load_inventory
+
+        try:
+            return load_inventory(self.checkpoint_map(), self.models)[model]
+        except CheckpointInventoryError as exc:
+            raise StageBlocked(BLOCKED_MISSING_EVIDENCE, str(exc)) from exc
 
     def child_environment(self, runtime: ModelRuntime | None, threads: int) -> dict[str, str]:
         env = runtime_environment(runtime, self.repository)

@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from e3sse.production import preflight
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -117,6 +119,23 @@ def test_gate1_linkage_invariants(tmp_path):
     broken["calibration_side"]["nebDFT2k_edges_in_nebBVSE122k"] = 1680
     path.write_text(json.dumps(broken))
     assert "not every" in preflight.check_gate1_linkage(path).detail
+
+
+@pytest.mark.parametrize(("count", "status"), [(0, "failed"), (5, "failed"), (6, "passed")])
+def test_gate1_population_feasibility_is_checked_before_outcomes(tmp_path, count, status):
+    path = tmp_path / "populations.json"
+    path.write_text(json.dumps({
+        "outcome_columns_read": False, "dimension": 3,
+        "counts": {"development_structural_upper_bound_systems": count},
+        "inputs": {},
+    }))
+    check = preflight.check_gate1_structural_populations(path, tmp_path / "absent.json")
+    assert check.status == status
+    if status == "failed":
+        assert check.evidence == {
+            "path": str(path), "development_structural_upper_bound_systems": count,
+            "support_k": 5, "required_minimum": 6,
+            "study5_resolution": "defer or owner-approved pre-outcome redesign"}
 
 
 def _report(name: str, *, permutation: bool = True) -> dict:

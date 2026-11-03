@@ -113,12 +113,12 @@ class Context:
         return self.runtime_root / environment / "bin" / "python"
 
     def checkpoint(self, name: str) -> Path:
-        if not self.checkpoint_map_path.is_file():
-            raise SystemExit(f"missing checkpoint map {self.checkpoint_map_path}")
-        mapping = json.loads(self.checkpoint_map_path.read_text(encoding="utf-8"))
-        if name not in mapping:
-            raise SystemExit(f"checkpoint map lacks {name}")
-        return Path(mapping[name]).expanduser()
+        from e3sse.production.checkpoints import CheckpointInventoryError, load_inventory
+
+        try:
+            return load_inventory(self.checkpoint_map_path, self.models)[name]
+        except CheckpointInventoryError as exc:
+            raise SystemExit(str(exc)) from exc
 
     def run_dir(self, run: str) -> Path:
         return self.output / "inference" / run

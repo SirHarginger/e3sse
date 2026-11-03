@@ -89,8 +89,9 @@ def audit(active_protocol: dict) -> dict:
     )
 
     settings = settings_from_protocol(active_protocol)
-    neb_type, module = neb_class()
+    neb_type, module, compatibility = neb_class()
     checks: dict = {"ase_version": ase.__version__, "neb_module": module,
+                    "neb_import_compatibility": compatibility,
                     "neb_signature": str(inspect.signature(neb_type.__init__))}
     band = reference_emt_vacancy_band()
     for image in band:
@@ -154,8 +155,9 @@ def audit(active_protocol: dict) -> dict:
     checks["passed"] = bool(
         checks["failure_classification"] == {"raising_calculator": "calculator_exception",
                                              "non_finite_calculator": "non_finite_value"}
-        and 
-        checks["fire_parameters_match"]
+        and checks["fire_parameters_match"]
+        and checks["neb_import_compatibility"] in
+            ("native", "scipy_cumulative_trapezoid_alias")
         and checks["neb_constructor"]["method"] == NEB_METHOD_CLASSES.get(settings.method)
         and all(k == settings.k for k in checks["neb_constructor"]["spring_constants"])
         and checks["fresh_optimizer_steps_for_steps_3"] == 3

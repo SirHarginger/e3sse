@@ -3,14 +3,15 @@
 The protocol requires one pristine host structure per ``material_id`` from the same
 source for development, calibration and pool units (never a nebDFT2k vacancy NEB
 supercell), with the source confirmed by the server descriptor-availability audit.
-Its file format has not been inspected locally, so nothing is guessed.  The
-production config names the source explicitly (``runners.structures.source``):
+The production config names the source explicitly (``runners.structures.source``):
 
 * ``{"kind": "ase_per_material", "pattern": "<path with {material_id}>"}``: one
   ASE-readable file per material (e.g. CIF), read with ``ase.io.read``;
 * ``{"kind": "optimade_jsonl", "path": "<file>", "id_field": "<dotted key>"}``:
   OPTIMADE structure entries (``lattice_vectors``, ``cartesian_site_positions``,
   ``species_at_sites``, ``species``).
+* ``{"kind": "ase_extxyz_shards", "paths": [...], "id_field": "material_id"}``:
+  immutable BVEL13k extxyz shards, keyed by the source-provided frame identifier.
 
 Paths are relative to the data root.  Every file read must be in the pinned G0
 input manifest (SHA-256 verified when G0 recorded one).  An unconfigured source is
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -35,10 +37,12 @@ class StructureSource:
             raise MissingEvidence("pristine structure source not configured "
                                   "(runners.structures.source); the data-engineer server audit "
                                   "must pin it (open item descriptor_availability)")
-        if spec.get("kind") not in ("ase_per_material", "optimade_jsonl"):
+        if spec.get("kind") not in ("ase_per_material", "optimade_jsonl",
+                                    "ase_extxyz_shards"):
             raise RunnerValidationError(f"unknown structure source kind {spec.get('kind')!r}")
         self.spec, self.data_root, self.g0_inputs = dict(spec), Path(data_root), g0_inputs
         self._optimade: dict[str, dict[str, Any]] | None = None
+        self._extxyz: dict[str, tuple[Path, int]] | None = None
         self.files_read: dict[str, str] = {}
 
     def identity(self) -> dict[str, Any]:
@@ -75,7 +79,65 @@ class StructureSource:
             if len(frames) != 1:
                 raise RunnerValidationError(f"{path}: {len(frames)} structures, expected one")
             return _geometry_only(frames[0])
+        if self.spec["kind"] == "ase_extxyz_shards":
+            return self._extxyz_atoms(material_id)
         return self._optimade_atoms(material_id)
+
+    def _extxyz_atoms(self, material_id: str) -> Any:
+        """Load one frame by ID; indexing reads no energy/barrier fields."""
+
+        if self.spec.get("id_field") != "material_id":
+            raise RunnerValidationError("BVEL13k extxyz id_field must be 'material_id'")
+        if self._extxyz is None:
+            paths = self.spec.get("paths")
+            if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
+                raise RunnerValidationError("ase_extxyz_shards needs a non-empty paths list")
+            entries: dict[str, tuple[Path, int]] = {}
+            for value in paths:
+                path = self._verified(self._resolve(value))
+                with path.open("rb") as handle:
+                    while True:
+                        offset = handle.tell()
+                        line = handle.readline()
+                        if not line:
+                            break
+                        try:
+                            count = int(line.strip())
+                        except ValueError as exc:
+                            raise RunnerValidationError(f"{path}: invalid extxyz atom count") from exc
+                        header = handle.readline().decode("utf-8")
+                        match = re.search(r'(?:^|\s)material_id=(?:"([^"]+)"|(\S+))', header)
+                        if match is None:
+                            raise RunnerValidationError(f"{path}: extxyz frame lacks material_id")
+                        key = match.group(1) or match.group(2)
+                        if key in entries:
+                            raise RunnerValidationError(f"two pristine structures for material {key}")
+                        entries[key] = (path, offset)
+                        for _ in range(count):
+                            if not handle.readline():
+                                raise RunnerValidationError(f"{path}: truncated extxyz frame {key}")
+            self._extxyz = entries
+        location = self._extxyz.get(material_id)
+        if location is None:
+            raise MissingEvidence(f"no pristine structure for {material_id} in the extxyz shards")
+        from io import StringIO
+
+        from ase.io import read
+
+        # ase.io.extxyz rewinds any handle it is given (seek(0)), so the indexed frame
+        # is sliced out first and parsed on its own; otherwise every lookup would
+        # silently return the first frame of the shard.
+        path, offset = location
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            count = int(handle.readline())
+            lines = [handle.readline() for _ in range(count + 1)]
+        frame = f"{count}\n" + b"".join(lines).decode("utf-8")
+        atoms = read(StringIO(frame), index=0, format="extxyz")
+        if str(atoms.info.get("material_id")) != material_id:
+            raise RunnerValidationError(f"{path}: frame at offset {offset} is "
+                                        f"{atoms.info.get('material_id')!r}, not {material_id}")
+        return _geometry_only(atoms)
 
     def _optimade_atoms(self, material_id: str) -> Any:
         from ase import Atoms

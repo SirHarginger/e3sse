@@ -165,12 +165,12 @@ class RunnerContext:
 
     def checkpoint(self, model: str) -> Path:
         path = Path(self.config["runtime"]["checkpoint_map"]).expanduser()
-        if not path.is_file():
-            raise MissingEvidence(f"checkpoint map {path} absent")
-        mapping = load_json(path)
-        if model not in mapping:
-            raise MissingEvidence(f"checkpoint map lacks {model}")
-        return Path(mapping[model]).expanduser()
+        from e3sse.production.checkpoints import CheckpointInventoryError, load_inventory
+
+        try:
+            return load_inventory(path, self.models)[model]
+        except CheckpointInventoryError as exc:
+            raise MissingEvidence(str(exc)) from exc
 
     # ------------------------------------------------------------- artifacts
     @property

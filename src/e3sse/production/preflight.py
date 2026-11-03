@@ -255,6 +255,21 @@ def check_gate1_structural_populations(path: Path, linkage_path: Path) -> Prefli
             return _failed("gate1_structural_populations", "freeze",
                            "population audit read different CSVs from the linkage audit",
                            linkage_inputs=theirs, population_inputs=ours)
+    # Necessary (not sufficient) condition for the frozen development-only LOCSO
+    # support reference.  Descriptor/path completeness can only shrink this bound.
+    from e3sse.production.runners.representation import SUPPORT_K
+
+    development = report.get("counts", {}).get("development_structural_upper_bound_systems")
+    if not isinstance(development, int) or development <= SUPPORT_K:
+        return _failed(
+            "gate1_structural_populations", "freeze",
+            "Study 5 is structurally infeasible under the frozen primary-population rules: "
+            f"development upper bound is {development!r}, but k={SUPPORT_K} support needs at "
+            f"least {SUPPORT_K + 1} systems; outcome-free identifiers/covariates only",
+            path=str(path), development_structural_upper_bound_systems=development,
+            support_k=SUPPORT_K, required_minimum=SUPPORT_K + 1,
+            study5_resolution="defer or owner-approved pre-outcome redesign",
+        )
     return _passed("gate1_structural_populations", "freeze", "structural counts recorded",
                    path=str(path), sha256=file_sha256(path), counts=report.get("counts"))
 
@@ -321,31 +336,18 @@ def check_embedding_evidence(active_protocol: Mapping[str, Any],
 
 
 def check_checkpoints(models: Mapping[str, Mapping[str, Any]], checkpoint_map: Path) -> list[PreflightCheck]:
-    from e3sse.protocol.adapters import checkpoint_digest
+    from e3sse.production.checkpoints import CheckpointInventoryError, load_inventory
 
-    if not checkpoint_map.is_file():
-        return [_missing("checkpoints", "production_compute",
-                         f"checkpoint map {checkpoint_map} absent")]
-    mapping = json.loads(checkpoint_map.read_text(encoding="utf-8"))
+    try:
+        mapping = load_inventory(checkpoint_map, models)
+    except CheckpointInventoryError as exc:
+        return [_missing("checkpoints", "production_compute", str(exc))]
     checks = []
     for name, model in sorted(models.items()):
         check_id = f"checkpoint:{name}"
-        if name not in mapping:
-            checks.append(_missing(check_id, "production_compute", "not in checkpoint map"))
-            continue
-        path = Path(mapping[name]).expanduser()
-        if not path.exists():
-            checks.append(_missing(check_id, "production_compute", f"{path} absent"))
-            continue
-        digest = checkpoint_digest(path)
-        bad = [file for file, sha in sorted(model.get("artifact_files", {}).items())
-               if not (path / file).is_file() or file_sha256(path / file) != sha]
-        if digest != model["weights_sha256"] or bad:
-            checks.append(_failed(check_id, "production_compute", "checkpoint SHA-256 mismatch",
-                                  path=str(path), actual_sha256=digest, artifact_mismatch=bad))
-        else:
-            checks.append(_passed(check_id, "production_compute", "weights SHA-256 verified",
-                                  path=str(path), sha256=digest))
+        path = mapping[name]
+        checks.append(_passed(check_id, "production_compute", "inventory and weights verified",
+                              path=str(path), sha256=model["weights_sha256"]))
     return checks
 
 

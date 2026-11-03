@@ -206,23 +206,41 @@ def litraj_exact_variant(settings: FrozenMLNEBSettings) -> FrozenMLNEBSettings:
                    source_endpoint_steps=LITRAJ_SOURCE_ENDPOINT_STEP_CAP, band_fmax=0.05)
 
 
-def neb_class() -> tuple[type, str]:
-    """ASE's NEB class and the module it came from (moved to ase.mep in 3.23)."""
+def _legacy_ase_scipy_compatibility() -> str:
+    """Restore the public SciPy spelling expected by ASE 3.22's ``ase.neb``."""
+
+    from scipy import integrate
+
+    if callable(getattr(integrate, "cumtrapz", None)):
+        return "native"
+    replacement = getattr(integrate, "cumulative_trapezoid", None)
+    if replacement is None:
+        raise ImportError("legacy ase.neb needs scipy.integrate.cumtrapz, but SciPy "
+                          "provides neither cumtrapz nor cumulative_trapezoid")
+    # SciPy 1.14 removed the old public spelling.  ASE 3.22 imports that spelling;
+    # the replacement is the same cumulative trapezoidal integration function.
+    integrate.cumtrapz = replacement
+    return "scipy_cumulative_trapezoid_alias"
+
+
+def neb_class() -> tuple[type, str, str]:
+    """ASE's NEB class, its module, and the recorded import-compatibility mode."""
 
     try:
         from ase.mep import NEB
 
-        return NEB, "ase.mep"
+        return NEB, "ase.mep", "native"
     except ImportError:
+        compatibility = _legacy_ase_scipy_compatibility()
         from ase.neb import NEB
 
-        return NEB, "ase.neb"
+        return NEB, "ase.neb", compatibility
 
 
 def build_neb(images: Sequence[Any], settings: FrozenMLNEBSettings) -> Any:
     """NEB with every algorithmic choice explicit; verifies inert DyNEB options."""
 
-    NEB, _ = neb_class()
+    NEB, _, _ = neb_class()
     neb = NEB(
         list(images),
         k=settings.k,
@@ -433,7 +451,7 @@ def run_ml_neb(
     missing = [key for key in REQUIRED_PROVENANCE if key not in provenance]
     if missing:
         raise ValueError(f"ML-NEB provenance lacks {missing}")
-    _, module = neb_class()
+    _, module, compatibility = neb_class()
     record: dict[str, Any] = {
         "schema_version": ML_NEB_RECORD_SCHEMA,
         "engine": ML_NEB_ENGINE_ID,
@@ -442,6 +460,7 @@ def run_ml_neb(
         "settings_sha256": settings.settings_sha256,
         "neb_method": settings.method,
         "neb_module": module,
+        "neb_import_compatibility": compatibility,
         "ase_version": ase.__version__,
         "retry_policy": "none",
         "n_images": len(images),

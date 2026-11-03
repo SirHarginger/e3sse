@@ -19,6 +19,7 @@ import numpy as np
 from ase.calculators.calculator import Calculator, all_changes
 from protocol_fixtures import canonical_units
 
+from e3sse.production.checkpoints import SCHEMA as CHECKPOINT_INVENTORY_SCHEMA
 from e3sse.protocol import freeze
 from e3sse.protocol.registration import build_registration_addendum
 
@@ -62,6 +63,33 @@ class _FakeParameter:
 class _FakeTorchModule:
     def parameters(self):
         return iter([_FakeParameter()])
+
+
+def _stand_in_checkpoints(root: Path, models: list[dict]) -> dict[str, Path]:
+    """Write placeholder checkpoint bytes and bind their hashes into the synthetic registry.
+
+    The synthetic worker never loads weights, but the checkpoint inventory re-hashes
+    every checkpoint against the registry, so the registry must name these bytes.
+    MatGL models are directories whose weights digest is ``state.pt``.
+    """
+
+    paths = {}
+    for model in models:
+        name = model["canonical_name"]
+        if model.get("artifact_files"):
+            path = root / name
+            path.mkdir(parents=True)
+            for file in model["artifact_files"]:
+                (path / file).write_bytes(f"{name}:{file}".encode())
+            model["artifact_files"] = {file: _sha(path / file) for file in model["artifact_files"]}
+            model["weights_sha256"] = _sha(path / "state.pt")
+        else:
+            path = root / Path(model["checkpoint_id"]).name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode())
+            model["weights_sha256"] = _sha(path)
+        paths[name] = path
+    return paths
 
 
 def synthetic_worker_setup(model, checkpoint, source_path, device):
@@ -154,6 +182,8 @@ def build_universe(tmp_path: Path, *, register: bool = True) -> dict:
     config = json.loads(Path("configs/protocol_freeze.json").read_text(encoding="utf-8"))
     groups = config["protocol"]["model_groups"]
     groups["A"] = [m for m in groups["A"] if m["canonical_name"] == "CHGNet-0.3.0"]
+    checkpoint_paths = _stand_in_checkpoints(tmp_path / "checkpoints",
+                                             [m for g in ("A", "B1", "B2") for m in groups[g]])
     families = {"mp-1": "oxide", "mp-2": "sulfide", "mp-3": "sulfide", "mp-4": "halide",
                 "mp-5": "oxide", "mp-9": "nitride"}
     population = {system: "tm_hubbard_u_secondary" if "Fe" in system else "primary"
@@ -208,8 +238,15 @@ def build_universe(tmp_path: Path, *, register: bool = True) -> dict:
     server = tmp_path / "server.json"
     server.write_text(json.dumps({"paths": {"data_root": str(data_root),
                                             "outputs_root": str(tmp_path / "outputs")}}))
-    checkpoints = tmp_path / "checkpoints.json"
-    checkpoints.write_text(json.dumps({name: str(tmp_path / name) for name in MODEL_SCALES}))
+    checkpoints = tmp_path / "checkpoint_inventory.json"
+    checkpoints.write_text(json.dumps({
+        "schema_version": CHECKPOINT_INVENTORY_SCHEMA,
+        "models": {m["canonical_name"]: {
+            "path": str(checkpoint_paths[m["canonical_name"]]),
+            "checkpoint_id": m["checkpoint_id"], "weights_sha256": m["weights_sha256"],
+            "artifact_files": m.get("artifact_files", {}),
+        } for g in ("A", "B1", "B2") for m in groups[g]},
+    }))
     study1 = json.loads(Path("configs/study1_softening_atlas.json").read_text(encoding="utf-8"))
     study1["frozen_protocol"].update(
         protocol_id=protocol["protocol_id"], freeze_git_sha="a" * 40,

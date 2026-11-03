@@ -9,7 +9,7 @@
   "server_config": "server.json",
   "output_root": "/srv/ben/e3sse/outputs/study1_softening_atlas",
   "model_runtime_root": "~/.venvs",
-  "checkpoint_map": "/srv/ben/e3sse/outputs/model_checkpoints/checkpoint_map.json",
+  "checkpoint_map": "/srv/ben/e3sse/outputs/model_checkpoints/checkpoint_inventory.json",
   "inference": {
     "classification": "engineering_choice: fixed so shard identities never depend on worker count",
     "source_file": "MPLiTrj_train.xyz",

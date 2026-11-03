@@ -15,7 +15,12 @@
   },
   "runtime": {
     "model_runtime_root": "~/.venvs",
-    "checkpoint_map": "/srv/ben/e3sse/outputs/model_checkpoints/checkpoint_map.json",
+    "checkpoint_map": "/srv/ben/e3sse/outputs/model_checkpoints/checkpoint_inventory.json",
+    "checkpoint_search_roots": [
+      "/srv/ben/e3sse/outputs/model_checkpoints",
+      "~/.cache",
+      "~/.venvs"
+    ],
     "require_clean_worktree": true,
     "expected_commit": null,
     "tmpdir": "../scratch",
@@ -515,8 +520,16 @@
   "runners": {
     "classification": "scientific bindings of the stage runners (enter the run identity)",
     "structures": {
-      "source": null,
-      "note": "pristine host structure per material_id; to be pinned from the data-engineer server audit (open item descriptor_availability): {kind: ase_per_material, pattern} or {kind: optimade_jsonl, path, id_field}; null = missing evidence"
+      "source": {
+        "kind": "ase_extxyz_shards",
+        "paths": [
+          "raw/BVEL13k/BVEL13k_train.xyz",
+          "raw/BVEL13k/BVEL13k_val.xyz",
+          "raw/BVEL13k/BVEL13k_test.xyz"
+        ],
+        "id_field": "material_id"
+      },
+      "note": "The three immutable BVEL13k extxyz shards are the G0-pinned pristine source. material_id is source-provided by the published LiTraj schema; paths are explicit and each file is verified against the G0 input manifest. The same source is used for development, P and Q."
     },
     "bvse": {
       "python": "~/.venvs/e3sse-ions-0.4.1/bin/python",

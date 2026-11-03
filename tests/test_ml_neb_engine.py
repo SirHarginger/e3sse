@@ -75,6 +75,18 @@ def test_neb_is_built_with_the_frozen_method_not_the_ase_default():
     assert neb.climb is True and neb.parallel is False and not neb.allow_shared_calculator
 
 
+def test_legacy_ase_scipy_alias_is_narrow_and_idempotent(monkeypatch):
+    from scipy import integrate
+
+    from e3sse.barriers.ml_neb import _legacy_ase_scipy_compatibility
+
+    replacement = integrate.cumulative_trapezoid
+    monkeypatch.setattr(integrate, "cumtrapz", None, raising=False)  # undone after the test
+    assert _legacy_ase_scipy_compatibility() == "scipy_cumulative_trapezoid_alias"
+    assert integrate.cumtrapz is replacement
+    assert _legacy_ase_scipy_compatibility() == "native"
+
+
 def test_converged_band_is_deterministic_and_reports_a_barrier():
     first = run_ml_neb(reference_emt_vacancy_band(), EMT, SETTINGS, unit_id="u", provenance=PROVENANCE,
                        migrating_species="Cu")

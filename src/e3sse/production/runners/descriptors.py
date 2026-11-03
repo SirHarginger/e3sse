@@ -48,6 +48,8 @@ def gate1_units(ctx: RunnerContext) -> list[dict[str, Any]]:
 
 
 def unit_descriptors(units, *, structures: StructureSource, bvse: dict[str, float]) -> dict:
+    from e3sse.protocol.partitions import normalize_chemical_system
+
     rows = {}
     for unit in units:
         key = unit_key(unit)
@@ -55,6 +57,13 @@ def unit_descriptors(units, *, structures: StructureSource, bvse: dict[str, floa
             atoms = structures.load(unit["material_id"])
         except (MissingEvidence, OSError, ValueError, KeyError) as exc:
             rows[key] = {**unit, "vector": None, "missing_reason": f"structure: {exc}"}
+            continue
+        observed_system = normalize_chemical_system(atoms.get_chemical_symbols())
+        if observed_system != unit["chemical_system"]:
+            rows[key] = {**unit, "vector": None,
+                         "missing_reason": "structure: chemical system differs from pristine "
+                                           f"structure ({observed_system})",
+                         "structure_elements": sorted(set(atoms.get_chemical_symbols()))}
             continue
         try:
             length, reason = hop_length(atoms, parse_edge_id(unit["unit_edge_id"])), None
