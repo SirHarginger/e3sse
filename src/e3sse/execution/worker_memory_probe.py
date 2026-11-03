@@ -24,6 +24,25 @@ from .thread_control import child_thread_environment
 
 PROBE_VERSION = "e3sse-worker-memory-probe-v1"
 _LI2O_CONVENTIONAL_ATOMS = 12
+# Conventional cubic fluorite Li2O, written out because ``ase.build.bulk(..., cubic=True)``
+# raises for fluorite in ASE 3.22.1.  Order and fractional coordinates equal what later
+# ASE releases build, so the probe geometry is identical in every frozen runtime.
+_LI2O_FRACTIONAL = (
+    ("Li", (0.0, 0.0, 0.0)), ("Li", (0.25, 0.25, 0.25)), ("O", (0.75, 0.75, 0.75)),
+    ("Li", (0.0, 0.5, 0.5)), ("Li", (0.25, 0.75, 0.75)), ("O", (0.75, 0.25, 0.25)),
+    ("Li", (0.5, 0.0, 0.5)), ("Li", (0.75, 0.25, 0.75)), ("O", (0.25, 0.75, 0.25)),
+    ("Li", (0.5, 0.5, 0.0)), ("Li", (0.75, 0.75, 0.25)), ("O", (0.25, 0.25, 0.75)),
+)
+
+
+def li2o_conventional_cell(a: float = 4.62) -> Any:
+    """The 12-atom conventional cubic Li2O cell (lattice constant ``a`` in A)."""
+
+    from ase import Atoms
+
+    symbols = [symbol for symbol, _ in _LI2O_FRACTIONAL]
+    return Atoms(symbols, scaled_positions=[xyz for _, xyz in _LI2O_FRACTIONAL],
+                 cell=[a, a, a], pbc=True)
 
 
 def peak_resident_bytes(status_path: Path = Path("/proc/self/status")) -> int:
@@ -58,7 +77,6 @@ def _measure_in_worker(
 ) -> dict[str, Any]:
     import numpy as np
     from ase import Atoms
-    from ase.build import bulk
 
     from e3sse.protocol.adapters import build_calculator
 
@@ -82,7 +100,7 @@ def _measure_in_worker(
             "evaluations": evaluations,
         }
     repeats = probe_supercell_repeats(min_atoms)
-    reference = bulk("Li2O", "fluorite", a=4.62, cubic=True).repeat((repeats,) * 3)
+    reference = li2o_conventional_cell(4.62).repeat((repeats,) * 3)
     rng = np.random.default_rng(2026)  # fixed operational geometry, not a scientific draw
     for _ in range(evaluations):
         atoms = reference.copy()

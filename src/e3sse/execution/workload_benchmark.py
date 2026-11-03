@@ -43,12 +43,11 @@ def synthetic_li_vacancy_band(min_atoms: int, interior_images: int) -> list[Any]
     """Deterministic Li2O supercell with one Li vacancy hop (linear, minimum image)."""
 
     import numpy as np
-    from ase.build import bulk
 
-    from .worker_memory_probe import probe_supercell_repeats
+    from .worker_memory_probe import li2o_conventional_cell, probe_supercell_repeats
 
     repeats = probe_supercell_repeats(min_atoms + 1)
-    host = bulk("Li2O", "fluorite", a=4.62, cubic=True).repeat((repeats,) * 3)
+    host = li2o_conventional_cell(4.62).repeat((repeats,) * 3)
     lithium = [i for i, s in enumerate(host.get_chemical_symbols()) if s == "Li"]
     vacancy = lithium[0]
     vectors = host.get_distances(vacancy, lithium, mic=True, vector=True)

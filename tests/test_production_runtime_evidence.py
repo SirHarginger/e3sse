@@ -167,3 +167,36 @@ def test_lock_verification_canonicalizes_dotted_distribution_names(tmp_path, mon
 
     with pytest.raises(RuntimeError, match="ruamel-yaml"):
         study1_inference.verify_runtime(environment, None, lock)
+
+
+def test_synthetic_li_vacancy_band_does_not_need_the_cubic_fluorite_builder(monkeypatch):
+    """ASE 3.22.1 raises 'Cannot create cubic cell for fluorite structure'; the band
+    and the memory-probe cell must not depend on that builder in any frozen runtime."""
+
+    import ase.build
+
+    from e3sse.execution import worker_memory_probe
+    from e3sse.execution.workload_benchmark import synthetic_li_vacancy_band
+
+    real_bulk = ase.build.bulk
+    reference = real_bulk("Li2O", "fluorite", a=4.62, cubic=True)  # this ASE supports it
+    cell = worker_memory_probe.li2o_conventional_cell(4.62)
+    assert cell.get_chemical_symbols() == reference.get_chemical_symbols()
+    assert np.allclose(cell.cell[:], reference.cell[:]) and cell.pbc.all()
+    assert np.allclose(cell.positions, reference.positions)
+
+    def old_ase_bulk(name, crystalstructure=None, *args, cubic=False, **kwargs):
+        if crystalstructure == "fluorite" and cubic:
+            raise RuntimeError("Cannot create cubic cell for fluorite structure")
+        return real_bulk(name, crystalstructure, *args, cubic=cubic, **kwargs)
+
+    monkeypatch.setattr(ase.build, "bulk", old_ase_bulk)
+    band = synthetic_li_vacancy_band(min_atoms=90, interior_images=3)
+    assert len(band) == 5 and len(band[0]) == 12 * 2**3 - 1 >= 90  # 2x2x2, one Li vacancy
+    assert all(len(image) == len(band[0]) for image in band)
+    moved = np.flatnonzero(np.linalg.norm(band[-1].positions - band[0].positions, axis=1) > 1e-9)
+    assert len(moved) == 1 and band[0][moved[0]].symbol == "Li"
+    hop = np.linalg.norm(band[-1].positions[moved[0]] - band[0].positions[moved[0]])
+    # Nearest Li-Li in ASE's 'Li2O fluorite' cell (Li on the fcc and one tetrahedral
+    # site, as ase.build.bulk assigns it): a*sqrt(3)/4.  Operational geometry only.
+    assert abs(hop - 4.62 * np.sqrt(3) / 4) < 1e-9
