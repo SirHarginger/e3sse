@@ -188,7 +188,8 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
             if report else False
         branches[model] = model_branch(
             model, records, pins[model], descriptors, dev_keys, quantile=quantile,
-            seed=analysis_seed(base_seed, "path_representation_tau_bootstrap", model),
+            seed=analysis_seed(base_seed, "cluster_bootstrap",
+                               "path_representation_tau_bootstrap", model),
             environment_sensitive=sensitive)
     outputs = {"path_representation": ctx.publish("path_representation.json", {
         "support_k": SUPPORT_K, "quantile_level": quantile, "models": branches,

@@ -27,6 +27,32 @@ from e3sse.softening.frame_statistics import (
 ENDPOINT_KINDS = ("source", "target")  # contracts.ENDPOINT_RELAXATION_FILE_KINDS
 
 
+def thresholds_or_closed(population, supported, quantile_level: float) -> dict[str, Any]:
+    """``applicability.gate_thresholds``; a threshold population without any supported,
+    defined value leaves the thresholds undefined (recorded), so the gate is closed."""
+
+    from e3sse.softening.applicability import GATED_DIAGNOSTICS, gate_thresholds
+
+    empty = [name for name in GATED_DIAGNOSTICS
+             if not any(ok and v is not None for v, ok in zip(population[name], supported))]
+    if empty:  # checked directly, never inferred from an error message
+        return {"thresholds": {name: None for name in GATED_DIAGNOSTICS},
+                "quantile_level": quantile_level, "status": "undefined",
+                "reason": f"no supported, defined value of {empty}",
+                "n_population": len(supported), "n_supported": sum(map(bool, supported))}
+    return {**gate_thresholds(population, supported, quantile_level), "status": "defined"}
+
+
+def gate_or_closed(*, supported: bool, diagnostics, thresholds) -> tuple[bool, list[str]]:
+    """``applicability.gate_decision``; undefined thresholds close the gate (no SRT)."""
+
+    from e3sse.softening.applicability import gate_decision
+
+    if any(value is None for value in thresholds.values()):
+        return False, ["thresholds_undefined"]
+    return gate_decision(supported=supported, diagnostics=diagnostics, thresholds=thresholds)
+
+
 def aligned_frame_stats(frame_ids: Sequence[str], model: Mapping[str, Any],
                         reference: Mapping[str, Any]) -> FrameStats:
     """FrameStats whose frame IDs (``<source>:<index>``) must name the statistics rows'

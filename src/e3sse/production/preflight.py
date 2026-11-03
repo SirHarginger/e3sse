@@ -496,6 +496,43 @@ def check_scope(active_protocol: Mapping[str, Any]) -> PreflightCheck:
                    "internal version-controlled freeze; transport deferred", **record)
 
 
+def check_bvse_pool_tolerance(active_protocol: Mapping[str, Any], *,
+                              config_dir: Path) -> PreflightCheck:
+    """The BVSE pool tolerance depends on predetermined server evidence.
+
+    While ``pool_barrier_tolerance_eV`` is null the pool comparison is recorded only and
+    excludes no unit.  A non-null tolerance is accepted only with a pinned evidence file
+    (the server BVSE reproduction or numerical-repeatability report), never a value
+    chosen from the distribution of pool differences.
+    """
+
+    recipe = active_protocol["amendments"]["prospective"]["ml_neb"]["bvse_recipe"]
+    tolerance = recipe.get("pool_barrier_tolerance_eV")
+    evidence = recipe.get("pool_barrier_tolerance_evidence")
+    if tolerance is None:
+        return _passed("bvse_pool_tolerance", "nothing",
+                       "pool_barrier_tolerance_eV is null: pool BVSE-barrier differences are "
+                       "recorded and no unit is excluded; a tolerance needs the server BVSE "
+                       "reproduction evidence first", depends_on="open item bvse_reproduction")
+    import math
+
+    from e3sse.production.runners.bvse_paths import pool_tolerance_evidence_problem
+
+    if (isinstance(tolerance, bool) or not isinstance(tolerance, (int, float))
+            or not math.isfinite(tolerance) or tolerance <= 0):
+        return _failed("bvse_pool_tolerance", "freeze", "pool tolerance must be a finite "
+                       "positive number of eV", tolerance_eV=tolerance)
+
+    problem = pool_tolerance_evidence_problem(dict(evidence) if isinstance(evidence, Mapping)
+                                              else evidence)
+    if problem:
+        return _failed("bvse_pool_tolerance", "freeze", f"a non-null pool tolerance needs "
+                       f"predetermined pinned server evidence: {problem}", tolerance_eV=tolerance)
+    path = Path(evidence["path"]).expanduser()
+    return _pinned_file("bvse_pool_tolerance", path if path.is_absolute() else config_dir / path,
+                        evidence["sha256"], "freeze")
+
+
 def check_outcome_access_declaration(study1_config: Path, *, freeze_bound: bool) -> PreflightCheck:
     """No Study-1 outcome record may exist before the freeze is materialized."""
 

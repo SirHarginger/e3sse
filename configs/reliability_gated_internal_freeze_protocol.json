@@ -176,7 +176,7 @@
       "quantile_level": 0.8,
       "threshold_population": {
         "study_2a": "regime-matched: for each Study-1 published-train target hop (primary population), s and its diagnostics recomputed from that material's non-path endpoint frames under the s_scope rule; supported hops only; force data only",
-        "study_4": "per repeat, the diagnostics of all calibration and test units of that repeat, symmetric and Y-free (preserves calibration/test exchangeability)",
+        "study_4": "per repeat, the force diagnostics (no barrier) of a frozen identity-only threshold slice of that repeat's training/calibration-side chemical systems (study4_threshold_slice); the slice units are never conformal-calibration or test units of that repeat, so threshold units and every unit on which the repeat's FDR, power, error or selection is evaluated are disjoint; the gate is applied identically to calibration and test units",
         "study_5": "development-set diagnostics (disjoint from conformal calibration units), Y-free"
       },
       "barrier_labels_used": false,
@@ -185,10 +185,24 @@
       "s_scope": "material scope with one frame rule for every unit: leakage-eligible non-path (endpoint-relaxation) frames of the target material; own path forbidden; this is the parent test-side rule applied identically to threshold, calibration and evaluation units",
       "gated_global_family": "gated B1/B2 diagnostics describe one pooled s per scope, so the gate is a scope-level switch; reported as such, never as a per-hop gate",
       "reporting": "realised coverage of the gate on every evaluated population; threshold accounting (n used, unsupported, undefined)",
-      "threshold_access": "Study 2a: published-train non-path endpoint frames via require_outcome_access(purpose='threshold_selection'); Study 4: per-repeat symmetric thresholds are part of the pre-specified analysis under seal 2 (not a tuning purpose); Study 5: thresholds are computed from label-free representation or descriptor covariates and need no outcome access",
+      "threshold_access": "Study 2a: published-train non-path endpoint frames via require_outcome_access(purpose='threshold_selection'); Study 4: per-repeat thresholds from the threshold slice's force diagnostics are part of the pre-specified analysis under seal 2 (not a tuning purpose; no barrier); Study 5: thresholds are computed from label-free representation or descriptor covariates and need no outcome access",
       "threshold_scale": "thresholds are computed on the rho_F (= sqrt(residual_fraction)) scale; quantiles are not invariant under sqrt",
       "threshold_weighting_unit": "one diagnostic value per material (not per hop), so materials with many hops are not over-weighted",
-      "study4_validation_units": "per-repeat Study-4 thresholds use the force diagnostics of all calibration and test units of the repeat, which include published-validation systems (Study-4 units under published_validation_split_role); threshold_population.study_4 governs Study 4, and the parent phrase 'not for thresholds' is read as applying to the Study-2a and pilot thresholds (flagged for owner confirmation)"
+      "study4_threshold_slice": {
+        "domain": "e3sse.study4-threshold",
+        "rule": "SHA-256(domain NUL parent_protocol_id NUL repeat_index NUL chemical_system)/2^256 < fraction (exact rational comparison), over the repeat's training/calibration-side systems only",
+        "fraction": 0.2,
+        "fraction_source": "the frozen holdout_fraction of the Study-5 weight-fit slice (density_ratio.settings.holdout_fraction), reused; not chosen from data",
+        "repeats_unchanged": "the ten repeated partitions and the Study-4 hypotheses are unchanged; the conformal-calibration side of each repeat is its training/calibration side minus the threshold slice",
+        "decision": "owner decision 2026-11-03: threshold-selection units must be disjoint from evaluated units",
+        "implementation": "e3sse.production.runners.study4.repeat_split / repeat_thresholds",
+        "validity": "exchangeability of calibration and test units is argued under the superpopulation model (systems i.i.d., the identity hash independent of the data); the slice is drawn from the training/calibration side only, so as an exact finite-population randomization statement over the fixed repeated partitions it does not cover test systems whose hash falls below the fraction; G4 is an empirical check either way",
+        "empty_slice": "an empty slice or one without a supported value closes the gate (deployment_gate.undefined_thresholds)",
+        "fraction_check": "the runner refuses a fraction different from density_ratio.settings.holdout_fraction"
+      },
+      "study4_validation_units": "published-validation systems are Study-4 units (published_validation_split_role); when one falls in a repeat's threshold slice it is used for that repeat's thresholds only (force diagnostics), never as a calibration or test unit of that repeat",
+      "undefined_thresholds": "owner decision 2026-11-03: a threshold population without any supported, defined value of a gated diagnostic (e.g. an empty Study-4 threshold slice, or a model with no supported training diagnostic in Study 2a) leaves the thresholds undefined and closes the gate: SRT is not applied and the raw prediction is kept, identically on every side; recorded with its accounting (e3sse.production.runners.frame_scales.thresholds_or_closed / gate_or_closed)",
+      "seed_derivation": "every runner seed uses a frozen e3sse.analysis.seed.v1 domain; per-material threshold bootstraps use ('cluster_bootstrap', 'deployment_gate_threshold', material_id) (common random numbers across models and stages), transfer material scales ('cluster_bootstrap', 'transfer_material_scale', hop_id), the representation tau_d bootstrap ('cluster_bootstrap', 'path_representation_tau_bootstrap', model) and the pilot MDE ('cluster_bootstrap', 'pilot_mde', model, repr(noise_eV))"
     },
     "endpoints": {
       "classification": "engineering_choice pending statistical-validator review",
@@ -205,7 +219,17 @@
         "label_free_baseline": "ranking by |raw barrier| (absolute errors grow with barrier size); rho_F must also be compared with it, descriptively",
         "inconclusive_zone": "neither support nor refute: reported as inconclusive; any rho_F advantage beyond the |raw barrier| baseline is descriptive only"
       },
-      "primary_family": "Holm across {P1_m : Group-A model m with s-bar <= 0.9} only (P2 removed from the active family with Study 3); P1_m p-value as in parent holm_family (one-sided chemical-system cluster-bootstrap p for rho_SRT <= 0)"
+      "primary_family": "Holm across {P1_m : Group-A model m with s-bar <= 0.9} only (P2 removed from the active family with Study 3); P1_m p-value as in parent holm_family (one-sided chemical-system cluster-bootstrap p for rho_SRT <= 0)",
+      "pilot_inputs": {
+        "decision": "owner decision 2026-11-03",
+        "p1_eligibility": "s-bar from the published-train Study-1 force tables only; these may include path frames of published-train hops (permitted training data)",
+        "mde_scales": "regime-matched endpoint-relaxation (non-path) frames of published-train primary hops, read with purpose threshold_selection",
+        "forbidden": "no transfer, calibration, Study-4 or prospective target outcome; no frame outside the published-train split and no frame of a published test or validation nebDFT2k hop (checked by e3sse.production.runners.pilot.pilot_boundary); training frames of systems that also have held-out records are counted",
+        "role": "design and power analysis fixed before any non-training outcome is unsealed; never used to tune results after outcomes are seen",
+        "access_record": "every pilot read leaves an outcome_access record (units, SHA-256, purpose)",
+        "label_free_covariates": "the MDE also reads the nebBVSE122k BVSE barriers of the published-test evaluation hops and their count (label-free covariates; no DFT or ML barrier)",
+        "check_timing": "pilot_boundary runs on the declared frames before each read and is recorded after"
+      }
     },
     "label_budget_downstream": {
       "classification": "paper_specified (Research Design 3.6 'propagated to barrier error', 4 RQ4)",
@@ -327,8 +351,9 @@
     },
     "selection": {
       "classification": "task_specified; extends parent study_4_contract",
-      "added_predictor": "SRT_gated_correct_or_raw: material-scope s under deployment_gate.s_scope for every calibration and test unit, thresholds computed per repeat symmetrically over all calibration and test units (Y-free), correct-or-raw framing",
-      "unchanged": "every parent study_4_contract and statistical_plan Study-4 rule (draws, seeds, alpha, c, MC SE, tie policy, one hop per chemical system)"
+      "added_predictor": "SRT_gated_correct_or_raw: material-scope s under deployment_gate.s_scope for every calibration and test unit; per-repeat Y-free thresholds set on the repeat's threshold slice (deployment_gate.study4_threshold_slice), disjoint from its calibration and test units; the gate is applied identically to calibration and test units; correct-or-raw framing",
+      "unchanged": "every parent study_4_contract and statistical_plan Study-4 rule (draws, seeds, alpha, c, MC SE, tie policy, one hop per chemical system, the ten repeated partitions) except the declared calibration-side change below",
+      "declared_change_calibration_side": "owner decision 2026-11-03 (declared deviation from the parent rule 'training-or-calibration side = calibration units'): in each repeat the threshold-slice systems (deployment_gate.study4_threshold_slice, about 20% of the training/calibration side) set the gate thresholds only and are removed from the calibration side for every predictor (raw, SRT_global, SRT_family, SRT_gated_correct_or_raw), so all predictors stay paired on identical units; H5a and H5b are evaluated on this smaller calibration side; test sides are unchanged"
     },
     "prospective": {
       "classification": "project owner's decision of 2026-11-01; split assignment and s source pending statistical-validator review",
@@ -541,7 +566,8 @@
           },
           "convergence": "recorded per unit (BVSE fmax <= fire.fmax); not an exclusion rule",
           "pool_barrier_tolerance_eV": null,
-          "pool_barrier_check": "every unit's regenerated BVSE barrier is compared with the nebBVSE122k barrier of the same edge (label-free) and recorded; with pool_barrier_tolerance_eV null nothing is excluded; a tolerance is frozen only from the server reproduction audit (open item bvse_reproduction), never from outcomes"
+          "pool_barrier_check": "every unit's regenerated BVSE barrier is compared with the nebBVSE122k barrier of the same edge (label-free) and recorded; with pool_barrier_tolerance_eV null nothing is excluded; a tolerance is frozen only from the server reproduction audit (open item bvse_reproduction), never from outcomes",
+          "pool_barrier_tolerance_rule": "owner decision 2026-11-03: null until the server BVSE reproduction evidence exists; while null every pool difference is recorded and no unit is excluded; a tolerance is frozen only from predetermined server evidence pinned as pool_barrier_tolerance_evidence {source in (bvse_reproduction_server_audit, numerical_repeatability_report), path, sha256, git_commit}; never this stage's own bvse_reproduction_report.json (its pool-difference distribution includes calibration units) and never a value selected from the distribution of nebBVSE122k pool differences (preflight check bvse_pool_tolerance)"
         }
       },
       "density_ratio": {
@@ -676,15 +702,16 @@
         "development": "published-test chemical systems with nebDFT2k hops, spanning systems excluded, one structure per system by structure_rule, its h*_3 if that hop is a nebDFT2k hop; disjoint from P and Q; units whose regenerated BVSE path does not reproduce nebDFT2k _init.xyz within the frozen tolerance are excluded from development ML-NEB and counted (declared filter, the same as for P; the hashed development manifest lists the pre-filter development set)",
         "nebDFT2k_inclusion_assumption": "treating h* in nebDFT2k as covariate shift assumes LiTraj's inclusion depended on the modelled BVSE/structural covariates and not on DFT NEB success; stated with every Study-5 result",
         "gate0_nebdft2k_criteria": {
-          "classification": "engineering_choice operationalizing parent study_5_contract.gate_0 ('same element and hop-length criteria as nebDFT2k'); covariate-only; statistical-validator recommendation 2026-11-03; pending owner decision (open item gate0_reference_envelope)",
+          "classification": "owner decision 2026-11-03 operationalizing parent study_5_contract.gate_0 ('same element and hop-length criteria as nebDFT2k'); covariate-only; recommended by the statistical-validator",
           "reference_set": "development units and P weight-fit-slice units (identity-only SHA-256 slice rule), disjoint from every conformal-calibration unit and every Q unit",
           "element_criterion": "every element of the unit's chemical system (the chemical_system key split on '-') occurs in at least one reference chemical system",
           "hop_length_criterion": "the unit's h*_3 hop length (descriptor hop_length_A from its pristine structure) lies within the closed range [min, max] of the reference units' h*_3 hop lengths",
-          "missing": "a unit with an undefined hop length or unknown elements is excluded as missing covariate evidence (role excluded_missing_covariate), counted separately from Gate-0 failures (fail closed)",
+          "missing": "any unit, including a P weight-fit-slice reference unit, with an undefined hop length or unknown elements is excluded as missing covariate evidence (role excluded_missing_covariate), counted separately from Gate-0 failures, and never shapes the envelope",
           "applies_to": "P calibration units and Q units identically (parent: 'identically for all populations'); development and P weight-fit-slice units define the reference",
           "statistical_rationale": "the envelope never depends on a conformal-calibration or test covariate, so weighted exchangeability of calibration and test units (Theorem 3.1) and the independence of w_hat from calibration units (Theorem 3.5) are preserved",
-          "owner_alternative": "research-architect: LiTraj's own nebDFT2k construction criteria if recoverable, otherwise the envelope over all included nebDFT2k hops (all splits) as a declared deviation; that envelope includes calibration-unit covariates",
-          "implementation": "e3sse.production.runners.population.gate0_decisions"
+          "implementation": "e3sse.production.runners.population.gate0_decisions",
+          "rationale": "conformal-calibration units stay outside every threshold/envelope construction; an envelope from the pre-calibration population only gives the cleanest weighted-exchangeability argument (Theorem 3.1) and keeps w_hat independent of calibration units (Theorem 3.5); the rule is fixed before any target outcome is read; all nebDFT2k is not used merely to widen support",
+          "owner_alternative_rejected": "all-nebDFT2k envelope (includes calibration-unit covariates) and recovered LiTraj construction criteria: not adopted"
         },
         "wcs_population": "converged, non-hold-out pool units with a density weight; a converged unit without a weight (missing descriptor) is counted as no_density_weight and is outside the FDR statement; weight-fit hold-out units are outside the applicability-coverage denominator"
       },
@@ -1075,9 +1102,14 @@
     },
     {
       "id": "gate0_reference_envelope",
-      "blocking": true,
+      "blocking": false,
       "blocker_class": "owner_decision",
-      "required_resolution": "confirm the Gate-0 element and hop-length envelope (amendments.prospective.populations.gate0_nebdft2k_criteria). Statistical-validator: the earlier draft built it from development and all P units, including conformal-calibration units, which breaks weighted exchangeability; implemented default: development + P weight-fit-slice units, applied identically to P calibration and Q units. Research-architect alternative: LiTraj's own nebDFT2k construction criteria if recoverable, else the all-nebDFT2k envelope as a declared deviation. Record the decision before any count is inspected."
+      "required_resolution": "confirm the Gate-0 element and hop-length envelope (amendments.prospective.populations.gate0_nebdft2k_criteria). Statistical-validator: the earlier draft built it from development and all P units, including conformal-calibration units, which breaks weighted exchangeability; implemented default: development + P weight-fit-slice units, applied identically to P calibration and Q units. Research-architect alternative: LiTraj's own nebDFT2k construction criteria if recoverable, else the all-nebDFT2k envelope as a declared deviation. Record the decision before any count is inspected.",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.populations.gate0_nebdft2k_criteria",
+        "evidence": "owner decision 2026-11-03: reference population = development units + P density-ratio weight-fit-slice units; envelope applied identically to P conformal-calibration and Q units; calibration units never construct it; all-nebDFT2k not used to widen support"
+      }
     },
     {
       "id": "p_population_split_membership",
@@ -1111,12 +1143,46 @@
         "rule": "amendments.prospective.ml_neb.runtime_requirements.ase",
         "evidence": "owner decision 2026-11-02: per-runtime ASE retained with explicit settings and cross-runtime EMT equivalence (local evidence: ASE 3.22.1, 3.24.0, 3.29.0 give 23 band steps, barriers equal to 1.2e-13 eV)"
       }
+    },
+    {
+      "id": "study4_threshold_disjointness",
+      "blocking": false,
+      "blocker_class": "owner_decision",
+      "required_resolution": "threshold_population.study_4 used the diagnostics of all calibration and test units of each repeat, so threshold units overlapped evaluated units",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.deployment_gate.study4_threshold_slice",
+        "evidence": "owner decision 2026-11-03: per-repeat identity-only threshold slice of the training/calibration side, disjoint from every evaluated unit; repeats and hypotheses unchanged"
+      }
+    },
+    {
+      "id": "pilot_input_boundary",
+      "blocking": false,
+      "blocker_class": "owner_decision",
+      "required_resolution": "confirm the pilot's P1 eligibility and MDE inputs",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.endpoints.pilot_inputs",
+        "evidence": "owner decision 2026-11-03: published-train Study-1 force tables (path frames of training hops permitted) and endpoint frames only; no final target outcome; design/power analysis only"
+      }
+    },
+    {
+      "id": "bvse_pool_tolerance",
+      "blocking": false,
+      "blocker_class": "owner_decision",
+      "required_resolution": "how the pool BVSE-barrier tolerance is fixed",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.ml_neb.bvse_recipe.pool_barrier_tolerance_rule",
+        "evidence": "owner decision 2026-11-03: null until server reproduction evidence; recorded only, excludes nothing; frozen only from predetermined pinned evidence"
+      }
     }
   ],
   "declared_scope_revisions": [
     "registration-gated historical protocol -> internal-freeze protocol governance revision made before production outcome inspection: external OSF registration replaced by an internal version-controlled freeze (see governance)",
     "registration-gated historical protocol -> internal-freeze protocol scope revision made before production outcome inspection: registration-gated historical protocol planned Study 3 (P2) and an independent Study-2b campaign; internal-freeze protocol formally defers transport validation (Study 3, P2, RD contribution C1 transport claims) and reuses the deployment-required ML-NEB calibration runs to evaluate relaxed-path behaviour",
-    "pre-internal-freeze uncommitted work added a Study-1 OSF-pending path (study1_training_only); it was never executed, is archived on branch archive/osf-pending-study1-work as historical development evidence, and is not part of the active protocol's code ancestry"
+    "pre-internal-freeze uncommitted work added a Study-1 OSF-pending path (study1_training_only); it was never executed, is archived on branch archive/osf-pending-study1-work as historical development evidence, and is not part of the active protocol's code ancestry",
+    "internal-freeze protocol Study-4 revision made before production outcome inspection: per-repeat gate thresholds come from an identity-only threshold slice of the training/calibration side, removed from that repeat's calibration units for every predictor (amendments.selection.declared_change_calibration_side)"
   ],
   "blocker_classes": {
     "local_engineering": "must all be resolved with reviewer evidence before the engineering checkpoint commit",

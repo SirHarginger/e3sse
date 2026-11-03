@@ -773,6 +773,7 @@ def collect_preflight(ctx: RunContext, *, rehash_datasets: bool) -> list[checks.
                                   expected_commit=ctx.config["runtime"].get("expected_commit")),
         *[checks.check_output_root(root, [ctx.data_root]) for root in ctx.write_roots()],
         checks.check_scope(ctx.active_protocol),
+        checks.check_bvse_pool_tolerance(ctx.active_protocol, config_dir=config_dir),
         checks.check_outcome_access_declaration(ctx.study1_config_path, freeze_bound=freeze_bound),
         *checks.check_freeze_input_pins(ctx.freeze_config, config_dir=config_dir),
         checks.check_dataset_hashes(g0, rehash=rehash_datasets),

@@ -83,6 +83,43 @@ def eligible_models(ctx: RunnerContext, summary: list[dict]) -> dict[str, float]
     return dict(sorted(eligible.items()))
 
 
+FORBIDDEN_SPLITS = ("test", "val")
+
+
+def pilot_boundary(membership, read_frames, endpoint_frames) -> dict[str, Any]:
+    """Frozen ``endpoints.pilot_inputs``: every frame the pilot reads is a published-train
+    MPLiTrj frame, never a frame of a published test or validation nebDFT2k hop (the
+    final-evaluation units); MDE frames are training endpoint-relaxation frames.  Path
+    frames of training hops are allowed; training frames of systems that also have
+    test/validation records are counted (they are training data, not evaluation units)."""
+
+    from e3sse.production.runners.context import RunnerValidationError
+
+    frames = {r["frame_id"]: r for r in membership if r.get("record_kind") == "mplitrj_frame"}
+    forbidden_systems = {r.get("chemical_system_id") for r in membership
+                         if r.get("published_split") in FORBIDDEN_SPLITS}
+    forbidden_hops = {r["hop_id"] for r in membership if r.get("record_kind") == "nebdft2k_hop"
+                      and r.get("published_split") in FORBIDDEN_SPLITS}
+    bad = [f for f in read_frames if f not in frames or frames[f].get("published_split") != "train"
+           or frames[f].get("hop_id") in forbidden_hops]
+    if bad:
+        raise RunnerValidationError(f"pilot would read {len(bad)} final-evaluation frame(s), "
+                                    f"e.g. {bad[0]}")
+    read = set(read_frames)
+    not_endpoint = [f for f in endpoint_frames if f not in read
+                    or frames[f].get("raw_file_kind") not in ("source", "target")]
+    if not_endpoint:
+        raise RunnerValidationError(f"pilot MDE frame is not a training endpoint frame: "
+                                    f"{not_endpoint[0]}")
+    return {"study2_pilot_frames_read": len(read),
+            "study2_pilot_endpoint_frames": len(set(endpoint_frames)),
+            "study2_pilot_path_frames_of_training_hops": sum(
+                frames[f].get("raw_file_kind") not in ("source", "target") for f in read),
+            "study2_pilot_frames_of_systems_with_heldout_records": sum(
+                frames[f].get("chemical_system_id") in forbidden_systems for f in read),
+            "study2_pilot_forbidden_overlap": 0}
+
+
 def pilot_eligible_models(ctx: RunnerContext) -> dict[str, float]:
     """P1 eligibility as fixed by the pilot amendment (never recomputed downstream)."""
 
@@ -161,6 +198,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                           and r.get("published_split") == "train")
     if not train_frames:
         raise MissingEvidence("no published-train frames in the frozen membership")
+    pilot_boundary(ctx.membership, train_frames, [])  # declared Study-1 frames, before the read
     _, summary = study1_tables(ctx)  # s-bar (eligibility) only; access recorded there
     eligible = eligible_models(ctx, summary)
     alpha = 0.05
@@ -191,8 +229,12 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                                 "effect_grid_lambda": list(EFFECT_GRID),
                                 "target_power": TARGET_POWER},
         "study2_mde_models": {}}
+    endpoint_frames: set[str] = set()
     for model in eligible:
-        diagnostics = training_endpoint_diagnostics(ctx, model, train_hops, constants)
+        diagnostics = training_endpoint_diagnostics(
+            ctx, model, train_hops, constants,
+            before_read=lambda frames: pilot_boundary(ctx.membership, train_frames, frames))
+        endpoint_frames |= set(diagnostics["frame_ids"])
         rows = [v for v in diagnostics["per_material"].values() if v["supported"]]
         scales = [v["s_hat"] for v in rows if v["s_hat"] is not None and v["s_hat"] > 0]
         widths = sorted(v["scale_uncertainty"] for v in rows if v["scale_uncertainty"] is not None)
@@ -205,8 +247,11 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
             "endpoint_frames": len(diagnostics["frame_ids"]),
             "by_noise": [mde_simulation(scales, tau, barriers, clusters, noise_eV=noise,
                                         alpha=alpha / len(eligible),
-                                        seed=analysis_seed(base_seed, "pilot_mde", model, noise))
+                                        seed=analysis_seed(base_seed, "cluster_bootstrap", "pilot_mde", model,
+                                                           repr(noise)))
                          for noise in NOISE_LEVELS_EV]}
+    mde["study2_pilot_boundary"] = pilot_boundary(ctx.membership, train_frames,
+                                                  sorted(endpoint_frames))
     thresholds = {
         "study2_classification_thresholds_eV": list(
             parent["study_2a_contract"]["thresholds_eV"]),

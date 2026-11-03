@@ -528,3 +528,103 @@ def test_bvse_runtime_lock_is_required_and_parsed(tmp_path):
     with pytest.raises(RunnerValidationError, match="SHA-256"):
         bvse_paths.runtime_versions({"ions_version": "0.4.1", "environment_lock": {
             "path": str(lock), "sha256": "0" * 64}})
+
+
+def test_every_runner_seed_uses_a_frozen_random_operation_domain():
+    """analysis_seed refuses unknown domains at run time; catch any call site statically."""
+
+    import ast
+
+    frozen = {"study4_hop_draw", "cluster_bootstrap", "study1_label_budget"}
+    for path in (REPOSITORY / "src" / "e3sse").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "analysis_seed"
+                    and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)):
+                assert node.args[1].value in frozen, (path.name, node.lineno, node.args[1].value)
+
+
+def test_pilot_boundary_refuses_final_evaluation_frames_and_non_endpoint_mde_frames():
+    from e3sse.production.runners.pilot import pilot_boundary
+
+    membership = [
+        {"record_kind": "mplitrj_frame", "frame_id": "t:0", "published_split": "train",
+         "chemical_system_id": "Li-O", "hop_id": "h1", "raw_file_kind": "source"},
+        {"record_kind": "mplitrj_frame", "frame_id": "t:1", "published_split": "train",
+         "chemical_system_id": "Li-O", "hop_id": "h1", "raw_file_kind": "band_optim_step"},
+        {"record_kind": "mplitrj_frame", "frame_id": "x:0", "published_split": "test",
+         "chemical_system_id": "Li-S", "hop_id": "h2", "raw_file_kind": "source"},
+        {"record_kind": "nebdft2k_hop", "hop_id": "h2", "published_split": "test",
+         "chemical_system_id": "Li-S"}]
+    record = pilot_boundary(membership, ["t:0", "t:1"], ["t:0"])
+    assert record["study2_pilot_path_frames_of_training_hops"] == 1  # permitted
+    assert record["study2_pilot_forbidden_overlap"] == 0
+    with pytest.raises(RunnerValidationError, match="final-evaluation"):
+        pilot_boundary(membership, ["t:0", "x:0"], ["t:0"])
+    with pytest.raises(RunnerValidationError, match="endpoint"):
+        pilot_boundary(membership, ["t:0", "t:1"], ["t:1"])
+
+
+def test_bvse_pool_tolerance_preflight_depends_on_pinned_server_evidence(tmp_path):
+    import copy
+
+    from e3sse.production.preflight import check_bvse_pool_tolerance
+
+    protocol = json.loads((REPOSITORY / "configs" /
+                           "reliability_gated_internal_freeze_protocol.json").read_text())
+    recipe = protocol["amendments"]["prospective"]["ml_neb"]["bvse_recipe"]
+    assert recipe["pool_barrier_tolerance_eV"] is None
+    check = check_bvse_pool_tolerance(protocol, config_dir=tmp_path)
+    assert check.status == "passed" and not check.blocking  # recorded only, excludes nothing
+    chosen = copy.deepcopy(protocol)
+    chosen["amendments"]["prospective"]["ml_neb"]["bvse_recipe"]["pool_barrier_tolerance_eV"] = 0.05
+    assert check_bvse_pool_tolerance(chosen, config_dir=tmp_path).status == "failed"
+    recipe = chosen["amendments"]["prospective"]["ml_neb"]["bvse_recipe"]
+    # The stage's own report (pool differences incl. calibration units) is never evidence.
+    own = tmp_path / "bvse_reproduction_report.json"
+    own.write_text("{}")
+    recipe["pool_barrier_tolerance_evidence"] = {
+        "source": "bvse_reproduction_server_audit", "path": str(own),
+        "sha256": hashlib.sha256(own.read_bytes()).hexdigest(), "git_commit": "c" * 40}
+    assert check_bvse_pool_tolerance(chosen, config_dir=tmp_path).status == "failed"
+    audit = tmp_path / "bvse_server_reproduction_audit.json"
+    audit.write_text("{}")
+    recipe["pool_barrier_tolerance_evidence"] = {
+        "source": "bvse_reproduction_server_audit", "path": str(audit),
+        "sha256": hashlib.sha256(audit.read_bytes()).hexdigest(), "git_commit": "c" * 40}
+    assert check_bvse_pool_tolerance(chosen, config_dir=tmp_path).status == "passed"
+    recipe["pool_barrier_tolerance_evidence"]["sha256"] = "0" * 64
+    assert check_bvse_pool_tolerance(chosen, config_dir=tmp_path).status == "failed"
+
+
+def test_study4_threshold_slice_is_identity_only_and_training_side_only():
+    from e3sse.production.runners import study4
+
+    calibration = [f"Li-X{i}" for i in range(40)]
+    test = [f"Li-T{i}" for i in range(10)]
+    split = study4.repeat_split("p" * 64, 3, calibration, test, 0.2)
+    assert split == study4.repeat_split("p" * 64, 3, list(reversed(calibration)), test, 0.2)
+    assert split["threshold"] and split["threshold"] <= set(calibration)
+    assert not split["threshold"] & (split["calibration"] | split["test"])
+    assert split["test"] == set(test)
+    assert split["threshold"] != study4.repeat_split("p" * 64, 4, calibration, test, 0.2)["threshold"]
+    with pytest.raises(RunnerValidationError):
+        study4.repeat_split("p" * 64, 0, ["Li-O"], ["Li-O"], 0.2)
+
+
+def test_reference_unit_missing_covariates_is_excluded_and_never_shapes_the_envelope(monkeypatch):
+    monkeypatch.setattr(population, "weight_fit_slice",
+                        lambda parent, system, fraction: system in {"Li-P-S", "Br-Li"})
+    units = [_unit("development", "Li-O", "mp-1"), _unit("P", "Li-P-S", "mp-2"),
+             _unit("P", "Br-Li", "mp-3"), _unit("Q", "Br-Li-O", "mp-4")]
+    descriptors = {
+        "development:Li-O": {"vector": _vector(hop=2.0), "chemical_system": "Li-O"},
+        "P:Li-P-S": {"vector": _vector("sulfide", 3.0), "chemical_system": "Li-P-S"},
+        "P:Br-Li": {"vector": None, "chemical_system": "Br-Li"},  # slice unit, no covariates
+        "Q:Br-Li-O": {"vector": _vector(hop=2.5), "chemical_system": "Br-Li-O"}}
+    built, _ = population.build_population(units, descriptors, parent_protocol_id="p" * 64,
+                                           fraction=0.2)
+    roles = {u["unit_key"]: u["role"] for u in built["units"]}
+    assert roles["P:Br-Li"] == "excluded_missing_covariate"
+    assert roles["Q:Br-Li-O"] == "excluded_gate0"  # Br only came from the incomplete unit
+    assert built["gate0"]["element_support"] == ["Li", "O", "P", "S"]
+    assert built["gate0"]["reference_units"] == 2

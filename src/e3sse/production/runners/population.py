@@ -77,16 +77,26 @@ def gate0_decisions(units: list[dict[str, Any]], descriptors: dict[str, Any], *,
 
     reference = gate0_reference_units(units, parent_protocol_id=parent_protocol_id,
                                       fraction=fraction)
-    rows = [descriptors[unit_key(u)] for u in reference]
+    def missing(unit) -> list[str]:
+        row = descriptors[unit_key(unit)]
+        reasons = [] if system_elements(row["chemical_system"]) else ["elements_unknown"]
+        if (row["vector"][HOP_LENGTH_INDEX] if row.get("vector") else None) is None:
+            reasons.append("hop_length_undefined")
+        return reasons
+
+    # A reference unit without its covariates neither shapes the envelope nor passes:
+    # it is excluded as missing evidence, like any other unit.
+    decisions = {unit_key(u): {"passes": False, "reasons": missing(u)}
+                 for u in reference if u["side"] != "development" and missing(u)}
+    complete = [u for u in reference if not missing(u)]
+    rows = [descriptors[unit_key(u)] for u in complete]
     elements = {e for row in rows for e in system_elements(row["chemical_system"])}
-    lengths = [row["vector"][HOP_LENGTH_INDEX] for row in rows
-               if row.get("vector") and row["vector"][HOP_LENGTH_INDEX] is not None]
+    lengths = [row["vector"][HOP_LENGTH_INDEX] for row in rows]
     if not elements or not lengths:
         raise RunnerValidationError("no Gate-0 reference elements or hop lengths "
                                     "(development and P weight-fit slice)")
     low, high = min(lengths), max(lengths)
     reference_keys = {unit_key(u) for u in reference}
-    decisions = {}
     for unit in units:
         if unit["side"] == "development" or unit_key(unit) in reference_keys:
             continue
@@ -96,17 +106,17 @@ def gate0_decisions(units: list[dict[str, Any]], descriptors: dict[str, Any], *,
         if not unit_elements:
             reasons.append("elements_unknown")
         elif not unit_elements <= elements:
-            reasons.append("element_outside_calibration_support")
+            reasons.append("element_outside_reference_support")
         length = row["vector"][HOP_LENGTH_INDEX] if row.get("vector") else None
         if length is None:
             reasons.append("hop_length_undefined")
         elif not low <= length <= high:
-            reasons.append("hop_length_outside_calibration_range")
+            reasons.append("hop_length_outside_reference_range")
         decisions[unit_key(unit)] = {"passes": not reasons, "reasons": reasons}
     return {"decisions": decisions, "element_support": sorted(elements),
             "hop_length_range_A": [low, high],
             "reference": "development units and P weight-fit-slice units",
-            "reference_units": len(reference)}
+            "reference_units": len(complete)}
 
 
 def build_population(units, descriptors, *, parent_protocol_id: str, fraction: float

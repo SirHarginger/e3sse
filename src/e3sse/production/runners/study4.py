@@ -15,7 +15,11 @@ and SRT-family with s pooled per repeat over MPLiTrj frames of that repeat's
 training-side chemical systems without nebDFT2k hops (symmetric fallback on the
 forces of all calibration and test units of the repeat when that stratum lacks
 support); and the added SRT_gated_correct_or_raw (``amendments.selection``):
-material-scope s (s_scope frames) under per-repeat symmetric, Y-free thresholds.
+material-scope s (s_scope frames) under per-repeat Y-free thresholds set on a frozen
+identity-only threshold slice of the repeat's training/calibration side
+(``deployment_gate.study4_threshold_slice``).  Slice units are never calibration or
+test units of that repeat; the gate is applied identically to both sides, and an
+undefined threshold population closes it (raw predictions).
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from e3sse.production.runners.context import RunnerContext
+from e3sse.production.runners.context import RunnerContext, RunnerValidationError, canonical_sha256
 
 REPEATED_BARRIERS = "nebdft2k_repeated_partition_barriers"
 PREDICTORS = ("raw", "SRT_global", "SRT_family", "SRT_gated_correct_or_raw")
@@ -147,6 +151,59 @@ def repeat_scales(pooled: _Pooled, membership, population_of, family_of, trainin
     return result
 
 
+THRESHOLD_SLICE_DOMAIN = b"e3sse.study4-threshold"
+
+
+def threshold_slice_member(parent_protocol_id: str, repeat: int, chemical_system: str,
+                           fraction: float) -> bool:
+    """Identity-only Study-4 threshold slice: SHA-256(domain NUL parent NUL repeat NUL
+    system)/2^256 < fraction, compared exactly (frozen deployment_gate.study4_threshold_slice)."""
+
+    import hashlib
+    from fractions import Fraction
+
+    digest = hashlib.sha256(THRESHOLD_SLICE_DOMAIN + b"\0" + parent_protocol_id.encode() + b"\0"
+                            + str(int(repeat)).encode() + b"\0" + chemical_system.encode()
+                            ).hexdigest()
+    limit = Fraction(repr(float(fraction)))
+    return int(digest, 16) * limit.denominator < limit.numerator * 2 ** 256
+
+
+def repeat_split(parent_protocol_id: str, repeat: int, calibration_systems, test_systems,
+                 fraction: float) -> dict[str, set[str]]:
+    """One repeat's units: the threshold slice (training/calibration side only) sets the
+    gate thresholds and is never a calibration or test unit of that repeat; the
+    remaining training-side systems are the conformal-calibration units."""
+
+    calibration_systems, test_systems = set(calibration_systems), set(test_systems)
+    if calibration_systems & test_systems:
+        raise RunnerValidationError(f"repeat {repeat}: a system is on both sides")
+    threshold = {s for s in calibration_systems
+                 if threshold_slice_member(parent_protocol_id, repeat, s, fraction)}
+    return {"threshold": threshold, "calibration": calibration_systems - threshold,
+            "test": test_systems}
+
+
+def repeat_thresholds(threshold_hops, diagnostics, quantile: float) -> dict[str, Any]:
+    """Gate thresholds from the threshold-slice units' force diagnostics only (one value
+    per material, supported materials only; no barrier)."""
+
+    from e3sse.production.runners.frame_scales import thresholds_or_closed
+
+    by_material: dict[str, Any] = {}
+    for hop in threshold_hops:
+        diag = diagnostics.get(hop["hop_id"])
+        if diag and hop["material_id"] not in by_material:
+            by_material[hop["material_id"]] = diag
+    materials = sorted({h["material_id"] for h in threshold_hops})
+    return thresholds_or_closed(
+        {"rho_F": [by_material[m]["rho_F"] if m in by_material else None for m in materials],
+         "scale_uncertainty": [by_material[m]["scale_uncertainty"] if m in by_material
+                               else None for m in materials]},
+        [bool(m in by_material and by_material[m]["estimates"]["all"]["supported"])
+         for m in materials], quantile)
+
+
 def _repeat_se(rows, key: str) -> float | None:
     """Monte Carlo s.e. across partitions (the dependence unit): SD of repeat means / sqrt(R)."""
 
@@ -203,7 +260,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
     import numpy as np
 
     from e3sse.barriers.fixed_geometry import srt_barrier
-    from e3sse.production.runners.frame_scales import hop_diagnostics, scope_frames
+    from e3sse.production.runners.frame_scales import gate_or_closed, hop_diagnostics, scope_frames
     from e3sse.production.runners.transfer import dft_barriers, raw_barriers, universe_hops
     from e3sse.protocol.partitions import analysis_seed
     from e3sse.selection.conformal import (
@@ -215,7 +272,6 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
         selection_outcome,
         study4_draw_seed,
     )
-    from e3sse.softening.applicability import gate_decision, gate_thresholds
     from e3sse.softening.study1_inputs import statistical_constants, support_parameters
 
     parent = ctx.parent_protocol
@@ -230,6 +286,15 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
             if population_of.get(h["chemical_system_id"]) == "primary"]
     y = dft_barriers(ctx, [h["hop_id"] for h in hops], role="repeated_test", kind=REPEATED_BARRIERS)
     draws = int(contract["draws_per_partition"])
+    threshold_slice = ctx.frozen_amendments()["deployment_gate"]["study4_threshold_slice"]
+    if threshold_slice["domain"] != THRESHOLD_SLICE_DOMAIN.decode():
+        raise RunnerValidationError("study4_threshold_slice domain differs from the code rule")
+    slice_fraction = float(threshold_slice["fraction"])
+    holdout = ctx.frozen_amendments()["prospective"]["density_ratio"]["settings"]["holdout_fraction"]
+    if slice_fraction != float(holdout):
+        raise RunnerValidationError("study4_threshold_slice.fraction must equal the frozen "
+                                    "density_ratio holdout_fraction it reuses")
+    parent_id = parent["protocol_id"]
     results = {}
     for model in sorted(ctx.models):
         sources = frame_sources(ctx, model)
@@ -247,17 +312,20 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                 source = pooled.row[frames[0]][1] if frames else None
                 cache[key] = hop_diagnostics(
                     source, source.rows(frames), material=hop["material_id"],
-                    seed=analysis_seed(constants["base_seed"], "deployment_gate_threshold",
+                    seed=analysis_seed(constants["base_seed"], "cluster_bootstrap", "deployment_gate_threshold",
                                        hop["material_id"]),
                     resamples=constants["bootstrap_resamples"],
                     parameters=parameters) if frames else None
             return cache[key]
 
-        records, undefined_draws = [], 0
+        records, undefined_draws, threshold_records = [], 0, []
         for partition in partitions:
             repeat = int(partition["repeat_index"])
-            calibration_systems = set(partition["training_or_calibration_chemical_systems"])
-            test_systems = set(partition["test_chemical_systems"])
+            split = repeat_split(parent_id, repeat,
+                                 partition["training_or_calibration_chemical_systems"],
+                                 partition["test_chemical_systems"], slice_fraction)
+            calibration_systems = split["calibration"] | split["threshold"]  # partition side
+            test_systems = split["test"]
             members = [h for h in hops if h["hop_id"] in raw]
             unit_frames, diagnostics = {}, {}
             for side, systems in (("training_or_calibration", calibration_systems),
@@ -268,22 +336,34 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                 for hop in side_hops:
                     unit_frames[hop["hop_id"]] = [(f, hop["material_id"]) for f in frames[hop["hop_id"]]]
                     diagnostics[hop["hop_id"]] = diagnose(hop, frames[hop["hop_id"]])
+            threshold_hops = [h for h in members if h["chemical_system_id"] in split["threshold"]]
+            evaluated = [h for h in members if h["chemical_system_id"] in
+                         split["calibration"] | split["test"]]
+            if {h["hop_id"] for h in threshold_hops} & {h["hop_id"] for h in evaluated}:
+                raise RunnerValidationError(f"repeat {repeat}: threshold and evaluation units overlap")
+            # The frozen symmetric fallback uses the calibration and test units' forces only.
             scales = repeat_scales(pooled, ctx.membership, population_of, family_of,
-                                   calibration_systems, unit_frames, parameters)
-            materials = sorted({h["material_id"] for h in members})
-            by_material = {}
-            for hop in members:
-                diag = diagnostics.get(hop["hop_id"])
-                if diag and hop["material_id"] not in by_material:
-                    by_material[hop["material_id"]] = diag
-            thresholds = gate_thresholds(
-                {"rho_F": [by_material[m]["rho_F"] if m in by_material else None for m in materials],
-                 "scale_uncertainty": [by_material[m]["scale_uncertainty"] if m in by_material
-                                       else None for m in materials]},
-                [bool(m in by_material and by_material[m]["estimates"]["all"]["supported"])
-                 for m in materials], quantile)["thresholds"]
+                                   calibration_systems,
+                                   {h["hop_id"]: unit_frames[h["hop_id"]] for h in evaluated},
+                                   parameters)
+            threshold_result = repeat_thresholds(threshold_hops, diagnostics, quantile)
+            thresholds = threshold_result["thresholds"]
+            threshold_records.append({"repeat": repeat, "threshold_systems": len(split["threshold"]),
+                                      "threshold_units": len(threshold_hops),
+                                      "evaluated_units": len(evaluated),
+                                      "threshold_unit_ids_sha256": canonical_sha256(
+                                          sorted(h["hop_id"] for h in threshold_hops)),
+                                      "thresholds": thresholds,
+                                      "threshold_status": threshold_result["status"],
+                                      "threshold_accounting": threshold_result.get(
+                                          "accounting", {k: threshold_result.get(k) for k in
+                                                         ("n_population", "n_supported", "reason")}),
+                                      "scale_sources": {
+                                          "global": scales["global"].get("source"),
+                                          **{f"family:{f}": v.get("source")
+                                             for f, v in sorted(scales["family"].items())}}})
             predictions: dict[str, dict[str, float]] = {p: {} for p in PREDICTORS}
-            for hop in members:
+            for hop in evaluated:
                 h = hop["hop_id"]
                 family = family_of.get(hop["material_id"])
                 predictions["raw"][h] = raw[h]
@@ -293,7 +373,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                     if value is not None:
                         predictions[name][h] = value
                 diag = diagnostics.get(h)
-                passes, _ = gate_decision(
+                passes, _ = gate_or_closed(
                     supported=bool(diag and diag["estimates"]["all"]["supported"]),
                     diagnostics={"rho_F": diag["rho_F"] if diag else None,
                                  "scale_uncertainty": diag["scale_uncertainty"] if diag else None},
@@ -301,7 +381,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                 predictions["SRT_gated_correct_or_raw"][h] = (
                     srt_barrier(raw[h], diag["s_hat"]) if passes else raw[h])
             hops_by_system = defaultdict(list)
-            for hop in members:
+            for hop in evaluated:  # threshold-slice systems are never drawn
                 hops_by_system[hop["chemical_system_id"]].append(hop["hop_id"])
             for draw in range(draws):
                 drawn = draw_one_hop_per_system(hops_by_system,
@@ -353,6 +433,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                                         "zero_selection_fraction": float(np.mean(
                                             [r["selection_size"] == 0 for r in rows])) if rows else None}
         results[model] = {"summary": summary, "draw_records": records,
+                          "threshold_slices": threshold_records,
                           "undefined_draws": undefined_draws,
                           "h5b": h5b_power_differences(records, contract, seed=analysis_seed(
                               constants["base_seed"], "cluster_bootstrap", "study4", "H5b", model),
@@ -360,10 +441,15 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
     outputs = {"study4_selection": ctx.publish("study4_selection.json", {
         "results": {m: r["summary"] for m, r in results.items()},
         "h5b": {m: r["h5b"] for m, r in results.items()},
+        "threshold_slices": {m: r["threshold_slices"] for m, r in results.items()},
+        "threshold_population": "per repeat, a frozen identity-only slice of the training/"
+                                "calibration-side systems; never a calibration or test unit of "
+                                "that repeat",
         "undefined_draws": {m: r["undefined_draws"] for m, r in results.items()},
         "g4_rule": "realised FDR <= alpha + 2 MC s.e. (validity check, not superiority)",
         "predictor_independence": "pooled s from training-side systems without nebDFT2k hops "
-                                  "per repeat; symmetric Y-free gate thresholds per repeat"}),
+                                  "per repeat; Y-free gate thresholds from the repeat's threshold "
+                                  "slice, disjoint from its calibration and test units"}),
                "conformal_draw_records": ctx.publish("derived/conformal_draw_records.json",
                                                      {m: r["draw_records"] for m, r in results.items()})}
     return {"outputs": outputs, "summary": {"models": sorted(results)}}

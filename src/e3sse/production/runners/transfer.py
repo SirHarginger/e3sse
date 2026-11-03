@@ -331,7 +331,7 @@ def primary_train_hops(ctx: RunnerContext) -> list[dict[str, Any]]:
 
 
 def training_endpoint_diagnostics(ctx: RunnerContext, model: str, train_hops,
-                                  constants) -> dict[str, Any]:
+                                  constants, before_read=None) -> dict[str, Any]:
     """Per-material diagnostics on published-train primary hops, s_scope (endpoint-
     relaxation, non-path) frames only, one value per material: the regime-matched basis
     of the deployment-gate thresholds and of the pilot's MDE scales.  Read with purpose
@@ -349,6 +349,8 @@ def training_endpoint_diagnostics(ctx: RunnerContext, model: str, train_hops,
     used = sorted({f for hop in train_hops for f in frames[hop["hop_id"]]})
     if not used:
         raise MissingEvidence(f"{model}: no published-train endpoint frames for the thresholds")
+    if before_read is not None:  # e.g. the pilot boundary, on the declared frames
+        before_read(used)
     ctx.require_outcome(role="train", outcome="training_endpoint_frame_forces",
                         outcome_kind=TRAIN_NONPATH_FORCE, unit_ids=used,
                         purpose="threshold_selection")
@@ -358,7 +360,7 @@ def training_endpoint_diagnostics(ctx: RunnerContext, model: str, train_hops,
         if material in per_material or not frames[hop["hop_id"]]:
             continue
         diag = hop_diagnostics(stats, stats.rows(frames[hop["hop_id"]]), material=material,
-                               seed=analysis_seed(constants["base_seed"], "deployment_gate_threshold",
+                               seed=analysis_seed(constants["base_seed"], "cluster_bootstrap", "deployment_gate_threshold",
                                                   material),
                                resamples=constants["bootstrap_resamples"],
                                parameters=constants["support"])
@@ -372,11 +374,11 @@ def gate_thresholds_from_training(ctx: RunnerContext, model: str, train_hops, qu
                                   constants) -> dict[str, Any]:
     """Regime-matched thresholds: published-train hops, s_scope frames, one value per material."""
 
-    from e3sse.softening.applicability import gate_thresholds
+    from e3sse.production.runners.frame_scales import thresholds_or_closed
 
     per_material = training_endpoint_diagnostics(ctx, model, train_hops, constants)["per_material"]
     materials = sorted(per_material)
-    thresholds = gate_thresholds(
+    thresholds = thresholds_or_closed(
         {"rho_F": [per_material[m]["rho_F"] for m in materials],
          "scale_uncertainty": [per_material[m]["scale_uncertainty"] for m in materials]},
         [per_material[m]["supported"] for m in materials], quantile)
@@ -489,13 +491,13 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
     from e3sse.barriers.fixed_geometry import common_population, metrics, rho_srt, srt_barrier
     from e3sse.production.runners.frame_scales import (
         aligned_frame_stats,
+        gate_or_closed,
         hop_diagnostics,
         scope_frames,
     )
     from e3sse.production.runners.inference_stats import holm
     from e3sse.production.runners.pilot import pilot_eligible_models, study1_tables
     from e3sse.protocol.partitions import analysis_seed
-    from e3sse.softening.applicability import gate_decision
     from e3sse.softening.study1_inference import verify_statistics_file
     from e3sse.softening.study1_inputs import statistical_constants, support_parameters
 
@@ -539,7 +541,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
         scope_gate = {}
         for scope, value in [("global", pooled["global"] or {}),
                              *[(f"family:{f}", v) for f, v in sorted(pooled["family"].items())]]:
-            passes, reasons = gate_decision(
+            passes, reasons = gate_or_closed(
                 supported=value.get("s_hat") is not None,
                 diagnostics={"rho_F": value.get("rho_F"),
                              "scale_uncertainty": value.get("scale_uncertainty")},
@@ -553,14 +555,14 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                 continue
             family = family_of.get(hop["material_id"])
             diag = hop_diagnostics(stats, stats.rows(b3_frames[h]), material=hop["material_id"],
-                                   seed=analysis_seed(constants["base_seed"], "transfer_material_scale",
+                                   seed=analysis_seed(constants["base_seed"], "cluster_bootstrap", "transfer_material_scale",
                                                       h), resamples=constants["bootstrap_resamples"],
                                    parameters=constants["support"]) if b3_frames[h] else None
             oracle = stats.estimate(stats.rows(oracle_frames[h]), "all",
                                     materials=[hop["material_id"]], pooled=False,
                                     parameters=constants["support"]) if oracle_frames[h] else None
             s3 = diag["s_hat"] if diag else None
-            passes, reasons = gate_decision(
+            passes, reasons = gate_or_closed(
                 supported=bool(diag and diag["estimates"]["all"]["supported"]),
                 diagnostics={"rho_F": diag["rho_F"] if diag else None,
                              "scale_uncertainty": diag["scale_uncertainty"] if diag else None},

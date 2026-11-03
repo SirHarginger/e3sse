@@ -48,6 +48,35 @@ RUNTIME_PACKAGES = ("ions", "ase", "numpy", "scipy", "spglib", "pymatgen", "netw
 BVSE_NEB_OPTIONS = ("k", "default", "distort", "gm")
 
 
+POOL_TOLERANCE_EVIDENCE_SOURCES = ("bvse_reproduction_server_audit",
+                                   "numerical_repeatability_report")
+STAGE_REPORT_NAME = "bvse_reproduction_report.json"
+
+
+def pool_tolerance_evidence_problem(evidence: Any) -> str | None:
+    """Why pinned pool-tolerance evidence is unacceptable (None if acceptable).
+
+    The evidence must be the predetermined server reproduction audit or a numerical-
+    repeatability run, pinned by path, SHA-256 and the commit that produced it; never
+    this stage's own report, whose pool-difference distribution includes calibration
+    units (a tolerance read off it would let calibration covariates build the filter).
+    """
+
+    import re
+
+    if not isinstance(evidence, dict):
+        return "evidence must be {source, path, sha256, git_commit}"
+    if evidence.get("source") not in POOL_TOLERANCE_EVIDENCE_SOURCES:
+        return f"evidence source must be one of {POOL_TOLERANCE_EVIDENCE_SOURCES}"
+    if not evidence.get("path") or Path(str(evidence["path"])).name == STAGE_REPORT_NAME:
+        return "evidence path is missing or is this stage's own report"
+    if not re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("sha256", ""))):
+        return "evidence sha256 must be a SHA-256 digest"
+    if not re.fullmatch(r"[0-9a-f]{40}", str(evidence.get("git_commit", ""))):
+        return "evidence git_commit must name the commit that produced it"
+    return None
+
+
 def recipe(protocol_amendments: dict[str, Any]) -> dict[str, Any]:
     """The frozen BVSE recipe (protocol ``ml_neb.bvse_recipe``), never code constants."""
 
@@ -58,6 +87,10 @@ def recipe(protocol_amendments: dict[str, Any]) -> dict[str, Any]:
     if sorted(options) != sorted(BVSE_NEB_OPTIONS):
         raise RunnerValidationError(f"bvse_neb_options must name exactly {BVSE_NEB_OPTIONS}")
     pool_tolerance = frozen.get("pool_barrier_tolerance_eV")
+    if pool_tolerance is not None:
+        problem = pool_tolerance_evidence_problem(frozen.get("pool_barrier_tolerance_evidence"))
+        if problem:
+            raise RunnerValidationError(f"pool BVSE tolerance evidence: {problem}")
     return {"mobile_symbol": frozen["mobile_symbol"], "mobile_charge": int(frozen["mobile_charge"]),
             "superedge_cutoff_A": float(frozen["superedge_cutoff_A"]),
             "n_images": int(frozen["n_images"]),
@@ -305,7 +338,7 @@ def run(ctx: RunnerContext) -> dict[str, Any]:
                         "barrier is compared with nebBVSE122k and excluded only under a frozen "
                         "pool_barrier_tolerance_eV (null: recorded only)"}
     outputs = {"bvse_path_index": ctx.publish("bvse_path_index.json", index),
-               "bvse_reproduction_report": ctx.publish("bvse_reproduction_report.json", report)}
+               "bvse_reproduction_report": ctx.publish(STAGE_REPORT_NAME, report)}
     return {"outputs": outputs, "summary": report}
 
 
