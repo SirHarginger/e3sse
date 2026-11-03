@@ -315,3 +315,31 @@ def test_unexpected_crash_is_infrastructure_and_the_invocation_is_recorded(tmp_p
     assert results[0].outcome == INFRASTRUCTURE_FAILURE and "traceback" in results[0].detail
     assert list((ctx.run_dir / "logs" / "runtime_audit").glob("exception-*.log"))
     assert list((ctx.run_dir / "invocations").glob("*.json"))
+
+
+def test_runner_exit_codes_map_to_distinct_failure_classes(tmp_path):
+    import sys
+
+    ctx = _context(make_layout(tmp_path))
+    ctx.run_dir.mkdir(parents=True)
+    env = ctx.child_environment(None, 1)
+    outcomes = {}
+    for code in (2, 3, 9):
+        try:
+            ctx.run_command("estimate", [sys.executable, "-c", f"raise SystemExit({code})"], env,
+                            failure_outcomes={2: orchestrator.BLOCKED_MISSING_EVIDENCE,
+                                              3: orchestrator.VALIDATION_FAILURE})
+        except orchestrator.ChildCommandFailed as exc:
+            outcomes[code] = exc.outcome
+    assert outcomes == {2: orchestrator.BLOCKED_MISSING_EVIDENCE,
+                        3: orchestrator.VALIDATION_FAILURE, 9: INFRASTRUCTURE_FAILURE}
+
+
+def test_checked_in_graph_has_no_missing_runner():
+    from e3sse.production.stage_graph import build_stage_graph
+
+    config = json.loads((REPOSITORY / "configs" / "production_execution.json").read_text())
+    graph = build_stage_graph(config["stages"], known_adapters=adapters())
+    assert all(s.implementation_status == "implemented" for s in graph.stages.values())
+    assert graph.order.index("pilot") < graph.order.index("transfer")
+    assert graph.stages["pilot"].outcome_access == ("mplitrj_published_train_dft_forces_energies",)

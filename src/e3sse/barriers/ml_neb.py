@@ -76,6 +76,10 @@ class FrozenMLNEBSettings:
     min_interatomic_distance_A: float
     site_collapse_A: float
     interior_below_endpoints_tolerance_eV: float
+    # Development-only LiTraj-exact sensitivity: LiTraj relaxed the source endpoint
+    # with ASE defaults.  None (the frozen rule) uses the symmetric endpoint settings.
+    source_endpoint_fmax: float | None = None
+    source_endpoint_steps: int | None = None
 
     @property
     def fire_parameters(self) -> dict[str, Any]:
@@ -176,6 +180,20 @@ def settings_from_protocol(protocol: Mapping[str, Any]) -> FrozenMLNEBSettings:
         interior_below_endpoints_tolerance_eV=_number(interior.get("tolerance"),
                                                       "interior_below_endpoints_eV.tolerance"),
     )
+
+
+LITRAJ_UNBOUNDED_STEPS = 100_000_000  # ASE's DEFAULT_MAX_STEPS: "no step limit"
+
+
+def litraj_exact_variant(settings: FrozenMLNEBSettings) -> FrozenMLNEBSettings:
+    """LiTraj c3ca5c2 exactly: source endpoint FIRE with ASE defaults (fmax 0.05, no step
+    limit), band fmax 0.05 within its 100 steps; the convergence check is unchanged.
+    A development-set-only sensitivity (frozen ml_neb.recovered_details_added)."""
+
+    from dataclasses import replace
+
+    return replace(settings, source_endpoint_fmax=0.05,
+                   source_endpoint_steps=LITRAJ_UNBOUNDED_STEPS, band_fmax=0.05)
 
 
 def neb_class() -> tuple[type, str]:
@@ -445,8 +463,12 @@ def run_ml_neb(
             # ASE 3.22 evaluates the model while constructing the optimizer.
             optimizer = _calculator_call(stage, lambda e=endpoint: fire_optimizer(e, settings),
                                          work)
-            _calculator_call(stage, lambda o=optimizer: o.run(fmax=settings.endpoint_fmax,
-                                                              steps=settings.endpoint_steps), work)
+            fmax, steps = settings.endpoint_fmax, settings.endpoint_steps
+            if position == 0 and settings.source_endpoint_fmax is not None:
+                fmax = settings.source_endpoint_fmax
+                steps = settings.source_endpoint_steps or steps
+            _calculator_call(stage, lambda o=optimizer, f=fmax, n=steps: o.run(fmax=f, steps=n),
+                             work)
             endpoint_steps.append(int(optimizer.get_number_of_steps()))
         for image in work[1:-1]:
             image.calc = calculator_factory()

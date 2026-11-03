@@ -94,25 +94,35 @@ Stages and dependencies are declared in `configs/production_execution.json`. The
 - **Freeze boundary.** Every pre-freeze evidence stage is an ancestor of `freeze` and reads no outcome. Every other stage descends from `freeze`, and runs only after the orchestrator has verified the frozen artifact. Verification covers its content hash, parent, frozen status, and equality with the active protocol, so a protocol edit made after the freeze is refused.
 - **Freeze order.** The protocol's ordering is enforced. No ancestor of `model_selection` reads a label of the conformal-calibration systems. Calibration ML-NEB, pool ML-NEB and density-ratio weights all come before weighted selection.
 
-| Stage | Public name | Reads | Status |
+| Stage | Public name | Reads | Runner |
 |---|---|---|---|
-| `runtime_audit`, `resource_profile`, `gate1_population_audit` | PREFLIGHT evidence | nothing | implemented |
-| `bvse_reproduction`, `descriptor_availability`, `development_population`, `development_ml_neb`, `path_representation` | PREFLIGHT evidence | nothing | missing runner (each names its next task) |
-| `preflight` | PREFLIGHT | nothing | implemented |
-| `freeze` | INTERNAL SCIENTIFIC FREEZE | nothing | implemented |
-| `estimate` | ESTIMATE / CALIBRATION (Study 1) | published-train forces | implemented |
-| `family_scale` | prospective family scale | training-side forces without nebDFT2k hops | missing runner |
-| `transfer`, `reliability` | TRANSFER, RELIABILITY | evaluation barriers, test-side non-path forces | missing runner |
-| `weight_slice_ml_neb`, `model_selection` | MODEL SELECTION | development barriers only | missing runner |
-| `deployment_calibration`, `discovery`, `density_ratio` | calibration and pool ML-NEB, weights | nothing (draw → run → drop) | missing runner |
-| `linear_recalibration_comparator` | B5 comparator | calibration-system barriers (after selection) | missing runner |
-| `controlled_selection` | RISK-CONTROLLED SELECTION (Study 4) | repeated-partition barriers | missing runner |
-| `discovery_selection` | PROSPECTIVE DISCOVERY (weighted conformal) | calibration barriers | missing runner |
-| `publication` | PUBLICATION BUILD | derived tables only | missing runner |
+| `runtime_audit`, `resource_profile`, `gate1_population_audit` | PREFLIGHT evidence | nothing | scripts (each frozen runtime) |
+| `descriptor_availability`, `development_population` | PREFLIGHT: covariates, unit and development manifests | nothing | `runners.descriptors`, `runners.population` |
+| `bvse_reproduction` | PREFLIGHT: BVSE paths (`ions`) and their reproduction | nothing | `runners.bvse_paths` (BVSE runtime) |
+| `development_ml_neb`, `path_representation` | PREFLIGHT: development bands, path representation, support reference | nothing | `runners.ml_neb_units` (every model), `runners.representation` |
+| `preflight` | PREFLIGHT | nothing | in-process aggregation |
+| `freeze` | INTERNAL SCIENTIFIC FREEZE | nothing | freeze builder |
+| `estimate` | ESTIMATE / CALIBRATION (Study 1) | published-train forces | Study-1 runners |
+| `pilot` | seal 2: training-only pilot amendment | published-train forces (via Study 1) | `runners.pilot` |
+| `family_scale` | prospective family scale | training-side forces without nebDFT2k hops | `runners.family_scale` |
+| `transfer` | UNSEEN-KINETICS TRANSFER (B0-B4, B6, P1, G1) | test-side forces, evaluation barriers | `runners.transfer` (every model) |
+| `reliability` | RELIABILITY (correct or abstain, P4/H6) | evaluation barriers | `runners.reliability` |
+| `weight_slice_ml_neb`, `model_selection` | MODEL SELECTION | development barriers only | `runners.ml_neb_units`, `runners.model_selection` |
+| `deployment_calibration`, `discovery` | calibration and pool ML-NEB (selected model) | nothing (draw → run → drop) | `runners.ml_neb_units` |
+| `linear_recalibration_comparator` | B5 comparator | calibration-system barriers (after selection) | `runners.recalibration` |
+| `controlled_selection` | RISK-CONTROLLED SELECTION (Study 4) | repeated-partition barriers, held-out forces | `runners.study4` (every model) |
+| `density_ratio` | covariate-shift weights | nothing | `runners.density` |
+| `discovery_selection` | PROSPECTIVE DISCOVERY (weighted conformal, funnel, candidates) | calibration barriers | `runners.discovery_selection` |
+| `publication` | PUBLICATION BUILD | derived tables only | `runners.publication` |
+
+No stage is a missing runner.  Every runner is driven by `scripts/run_production_stage.py` in three phases: `prepare` and `reduce` run in the project environment (or the BVSE runtime), and `model` runs in each model's frozen runtime. Exit code 2 means missing evidence, 3 a validation failure. Runners compute only through the existing libraries, read every outcome through `RunnerContext.require_outcome` (the frozen contract plus the stage scope, and seal 2 from the pilot), and resume through `e3sse.execution` shards. Post-freeze runners read every rule from the frozen artifact.
 
 `--stage X` runs X plus every dependency without a completion record. A blocked or failed stage stops only its dependents. By default (`freeze.require_outcome_runners_implemented: true`), the freeze also waits until every outcome-reading stage has a tested runner, so no analysis code is written after outcomes are seen. Setting it to `false` is a declared deviation, recorded with the run.
 
 ### Environments and checkpoints
+
+- BVSE runtime: `~/.venvs/e3sse-ions-0.4.1` (`runners.bvse.python`), Python 3.11 with `ions==0.4.1` (the release matching LiTraj `c3ca5c2` `notebooks/bvse_neb.ipynb`; it reproduces that notebook's Li3PO4 example: fmax 0.076 eV/Å, barrier 0.293 eV), its undeclared `pyyaml`, and the ASE and numpy it resolves. Build it from its own lock file. The reproduction audit against nebDFT2k `_init.xyz` confirms or refutes the pin.
+- Pristine structures: `runners.structures.source` must be pinned from the data-engineer server audit (`ase_per_material` pattern or `optimade_jsonl` path). Until then, the descriptor and BVSE stages report missing evidence.
 
 - Project environment: `/srv/ben/e3sse/.venv` (Python 3.14), `pip install -e ".[dev,figures]"`. It holds no MLIP package.
 - Frozen model runtimes: `~/.venvs/<env>` (Python 3.11.16), one per package version, rebuilt only from the lock files pinned in `configs/protocol_freeze.json` (table in `docs/workflow.md`). Model work runs with each runtime's own interpreter, `PYTHONPATH=src` and `PYTHONNOUSERSITE=1`. Production never installs or upgrades a package. A missing interpreter is reported as missing evidence.
@@ -131,8 +141,9 @@ $PROD --stage runtime_audit --resume                                 # 2. ASE/FI
 $PROD --stage resource_profile --resume                              # 3. memory + throughput
 $PROD --stage gate1_population_audit --resume                        # 4. structural populations
 $PROD --stage preflight --resume      # 5. runs every pre-freeze evidence stage, then checks all
-#   implement the missing pre-freeze runners, record the owner decisions and server evidence
-#   by reviewed protocol edits and commits, then repeat 1-5 until preflight passes
+#   pin the server evidence (structure source, ions version, development manifest SHA-256,
+#   path-representation branches) by reviewed protocol/config edits and commits,
+#   then repeat 1-5 until preflight passes
 $PROD --stage freeze --resume                                        # 6. internal freeze
 $PROD --stage all --resume                                           # 7. full production
 ```

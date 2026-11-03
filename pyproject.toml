@@ -50,6 +50,10 @@ extend-exclude = [".agents"]
 "src/e3sse/softening/study1_inference.py" = ["BLE001"]
 # A benchmark worker reports any failure (even BaseException) to its parent as infrastructure.
 "src/e3sse/execution/workload_benchmark.py" = ["BLE001"]
+# A model or ions failure on one unit is that unit's recorded scientific status.
+"src/e3sse/production/runners/bvse_paths.py" = ["BLE001"]
+"src/e3sse/production/runners/transfer.py" = ["BLE001"]
+"src/e3sse/production/runners/descriptors.py" = ["BLE001"]
 # An unexpected stage crash becomes a recorded infrastructure outcome with its traceback.
 "src/e3sse/production/orchestrator.py" = ["BLE001"]
 # Any shard-run failure is written to the run record before it is re-raised.

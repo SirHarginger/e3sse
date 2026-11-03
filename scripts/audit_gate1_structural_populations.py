@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from e3sse.config import load_config
-from e3sse.data.dataset_audit import discover_datasets
 from e3sse.execution.sharded_execution import (
     canonical_sha256,
     ensure_safe_output_dir,
@@ -40,6 +39,7 @@ from e3sse.softening import study1_inputs as inputs
 REPOSITORY = Path(__file__).resolve().parents[1]
 CODE_FILES = ("scripts/audit_gate1_structural_populations.py",
               "scripts/audit_rate_limiting_hop_linkage.py",
+              "src/e3sse/production/runners/gate1_tables.py",
               "src/e3sse/screening/gate1_populations.py",
               "src/e3sse/screening/rate_limiting_hop.py",
               "src/e3sse/protocol/partitions.py",
@@ -98,23 +98,13 @@ def main(argv: list[str] | None = None) -> int:
     study1, _ = inputs.load_study1_config(args.study1_config)
     protocol_dir = Path(study1["frozen_protocol"]["directory"])
     protocol = inputs.load_frozen_protocol(study1, directory=protocol_dir)
-    inventory = discover_datasets(data_root / "raw")
-    tables, provenance = {}, {}
+    from e3sse.production.runners.gate1_tables import linkage_tables
+
     try:
-        for dataset, columns in linkage.REQUIRED.items():
-            source = linkage.select_index(dataset, inventory.get(dataset, []))
-            digest = linkage._sha256(source)
-            linkage.verify_against_g0(source, digest, g0_inputs)
-            rows, short = linkage.read_columns(source, columns)
-            if short:
-                # A dropped edge row could change E*_3 without marking the material ambiguous.
-                raise linkage.AuditError(f"{dataset}: {short} row(s) shorter than the header")
-            tables[dataset] = (linkage.adapt_nebbvse_rows(rows) if dataset == "nebBVSE122k"
-                               else rows)
-            provenance[dataset] = {"path": str(source), "sha256": digest, "rows": len(rows),
-                                   "short_rows_skipped": short, "columns_read": list(columns)}
+        tables = linkage_tables(data_root / "raw", g0_inputs)
     except linkage.AuditError as exc:
         raise SystemExit(f"structural population audit stopped: {exc}") from exc
+    provenance = tables.pop("_provenance")
     identity = {
         "g0_input_manifest_sha256": manifest["sha256"],
         "inputs": {name: item["sha256"] for name, item in provenance.items()},

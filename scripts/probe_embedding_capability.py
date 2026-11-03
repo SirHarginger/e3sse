@@ -23,6 +23,7 @@ import json
 import platform
 from pathlib import Path
 
+from e3sse.representation.atom_embeddings import documented_embedding, torch_module
 from e3sse.representation.embedding_capability import (
     CAPABILITY_SCHEMA,
     DOCUMENTED_APIS,
@@ -53,27 +54,9 @@ def _model_entry(config: dict, name: str) -> dict:
     raise SystemExit(f"model {name!r} is not in the frozen registry")
 
 
-def _torch_module(calc, adapter: str):
-    """The underlying torch module, located by documented attributes only."""
-
-    for attribute in ("model", "models", "potential"):
-        module = getattr(calc, attribute, None)
-        if isinstance(module, list) and module:
-            module = module[0]
-        if module is not None and hasattr(module, "named_modules"):
-            return module
-    raise RuntimeError(f"no torch module found on the {adapter} calculator")
-
-
-def _documented(calc, adapter: str, atoms):
-    if adapter == "mace":
-        return calc.get_descriptors(atoms, invariants_only=True)
-    if adapter == "chgnet":
-        from pymatgen.io.ase import AseAtomsAdaptor
-
-        structure = AseAtomsAdaptor.get_structure(atoms)
-        return calc.model.predict_structure(structure, return_atom_feas=True)["atom_fea"]
-    raise KeyError(adapter)
+# Shared with production path-representation extraction (one implementation).
+_torch_module = torch_module
+_documented = documented_embedding
 
 
 def _installed(name: str) -> str | None:

@@ -33,6 +33,7 @@ IMPLEMENTATION_STATUSES = ("implemented", "missing_runner", "deferred")
 
 TRAIN_FORCES = "mplitrj_published_train_dft_forces_energies"
 TEST_SIDE_NONPATH_FORCES = "mplitrj_test_side_nonpath_forces"
+VALIDATION_FORCES = "mplitrj_validation_frame_forces"  # validation systems are Study-4 units
 OWN_PATH_FORCES_ORACLE = "mplitrj_own_path_forces_oracle"
 FAMILY_SCALE_FORCES = "mplitrj_train_systems_without_nebdft2k_forces"
 EVALUATION_BARRIERS = "nebdft2k_fixed_geometry_evaluation_barriers"
@@ -54,6 +55,8 @@ PERMITTED_OUTCOME_ACCESS: dict[str, frozenset[str]] = {
     **{name: frozenset() for name in PRE_FREEZE_STAGES},
     "freeze": frozenset(),
     "estimate": frozenset({TRAIN_FORCES}),
+    # Seal 2: training-only pilot over Study-1 force-derived estimates (no barrier).
+    "pilot": frozenset({TRAIN_FORCES}),
     "family_scale": frozenset({FAMILY_SCALE_FORCES}),
     "transfer": frozenset({TRAIN_FORCES, TEST_SIDE_NONPATH_FORCES, OWN_PATH_FORCES_ORACLE,
                            EVALUATION_BARRIERS}),
@@ -63,7 +66,7 @@ PERMITTED_OUTCOME_ACCESS: dict[str, frozenset[str]] = {
     "deployment_calibration": frozenset(),
     "linear_recalibration_comparator": frozenset({CALIBRATION_BARRIERS, EVALUATION_BARRIERS}),
     "controlled_selection": frozenset({TRAIN_FORCES, TEST_SIDE_NONPATH_FORCES,
-                                       REPEATED_PARTITION_BARRIERS}),
+                                       VALIDATION_FORCES, REPEATED_PARTITION_BARRIERS}),
     "density_ratio": frozenset(),
     "discovery": frozenset(),
     "discovery_selection": frozenset({CALIBRATION_BARRIERS}),
@@ -72,6 +75,8 @@ PERMITTED_OUTCOME_ACCESS: dict[str, frozenset[str]] = {
 
 # (earlier, later): when both stages exist, earlier must be an ancestor of later.
 REQUIRED_PRECEDENCE: tuple[tuple[str, str], ...] = (
+    ("estimate", "pilot"),
+    ("pilot", "transfer"),
     ("estimate", "transfer"),
     ("transfer", "reliability"),
     ("transfer", "model_selection"),
@@ -82,6 +87,8 @@ REQUIRED_PRECEDENCE: tuple[tuple[str, str], ...] = (
     ("model_selection", "discovery"),
     ("model_selection", "controlled_selection"),
     ("model_selection", "linear_recalibration_comparator"),
+    ("deployment_calibration", "density_ratio"),
+    ("discovery", "density_ratio"),
     ("weight_slice_ml_neb", "density_ratio"),
     ("deployment_calibration", "discovery_selection"),
     ("discovery", "discovery_selection"),

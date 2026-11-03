@@ -205,6 +205,7 @@ def structural_populations(
     not_a_candidate: list[str] = []
     ties = 0
     excluded_from_p: dict[str, list[str]] = defaultdict(list)
+    units: list[dict[str, Any]] = []
     for system in sorted(dft_systems | bvel_systems):
         in_dft = system in dft_systems
         membership = classify(system)
@@ -237,8 +238,17 @@ def structural_populations(
             continue
         ties += chosen["tie"]
         # Pool units have no nebDFT2k requirement; calibration-side h*_3 must be a nebDFT2k hop.
-        if side == "Q" or any(edge in dft_edges for edge in chosen["rate_limiting_edge_ids"]):
+        in_dft_edges = sorted(e for e in chosen["rate_limiting_edge_ids"] if e in dft_edges)
+        if side == "Q" or in_dft_edges:
             record["structural_upper_bound"].append(system)
+            # The unit's edge: the nebDFT2k direction of h*_3 on the calibration side,
+            # else the first stored direction (both directions are one physical hop).
+            units.append({"chemical_system": system, "side": side,
+                          "material_id": chosen["material_id"],
+                          "unit_edge_id": (in_dft_edges or sorted(chosen["rate_limiting_edge_ids"]))[0],
+                          "rate_limiting_edge_ids": sorted(chosen["rate_limiting_edge_ids"]),
+                          "critical_bvse_barrier_eV": chosen["critical_barrier_eV"],
+                          "structure_rule_tie": chosen["tie"]})
         else:
             record["rate_limiting_hop_not_in_nebDFT2k"].append(system)
 
@@ -260,6 +270,7 @@ def structural_populations(
         "calibration_side_materials": {"count": len(hop_in_dft), "sha256": _digest(hop_in_dft),
                                        "materials": sorted(hop_in_dft)},
         "populations": {side: summary(record) for side, record in sides.items()},
+        "units": sorted(units, key=lambda u: (u["side"], u["chemical_system"])),
         "excluded_from_P": {key: {"count": len(values), "sha256": _digest(values),
                                   "systems": sorted(values)}
                             for key, values in sorted(excluded_from_p.items())},

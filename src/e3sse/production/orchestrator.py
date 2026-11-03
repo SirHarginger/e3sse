@@ -985,6 +985,108 @@ class EstimateAdapter(StageAdapter):
             result.outputs[f"figure:{path.stem}"] = output_record(path)
 
 
+class RunnerAdapter(StageAdapter):
+    """A stage implemented by ``e3sse.production.runners`` (scripts/run_production_stage.py).
+
+    Phases: ``prepare`` (project, if the runner has one), ``model`` (each model's frozen
+    runtime: every model, or only the selected model), ``reduce`` (project, or the BVSE
+    runtime).  Workers and threads come from the central scheduler; threads are the
+    run-level pinned value per (model, workload).  Exit 2 = missing evidence, 3 =
+    validation failure, anything else = infrastructure.
+    """
+
+    def __init__(self, *, models: str | None = None, model_workload: str | None = None,
+                 interpreter: str = "project") -> None:
+        if models not in (None, "each", "selected"):
+            raise ValueError("models must be None, 'each' or 'selected'")
+        self.models, self.model_workload, self.interpreter = models, model_workload, interpreter
+
+    def _module(self, stage):
+        import importlib
+
+        from e3sse.production.runners import RUNNER_MODULES
+
+        return importlib.import_module(RUNNER_MODULES[stage.name])
+
+    def _python(self, ctx) -> Path:
+        if self.interpreter == "bvse":
+            path = Path(ctx.config.get("runners", {}).get("bvse", {}).get("python", "")).expanduser()
+            if not path.is_file():
+                raise StageBlocked(BLOCKED_MISSING_EVIDENCE,
+                                   f"BVSE runtime interpreter {path} absent (runners.bvse.python); "
+                                   "production never installs packages")
+            return path
+        return ctx.project_python
+
+    def _command(self, ctx, stage, phase, python, *, model=None, workers=1, threads=1):
+        command = [str(python), str(_scripts(ctx, "run_production_stage.py")),
+                   "--config", str(ctx.config_path), "--run-dir", str(ctx.run_dir),
+                   "--stage", stage.name, "--phase", phase, "--workers", str(workers),
+                   "--threads", str(threads),
+                   "--memory-reserve-gib", f"{ctx.policy.reserve_for(ctx.host()) / GIB:.3f}"]
+        return command + (["--model", model] if model else [])
+
+    def _models(self, ctx) -> list[str]:
+        if self.models == "each":
+            return sorted(ctx.models)
+        if self.models == "selected":
+            path = ctx.stage_dir("model_selection") / "model_selection.json"
+            if not path.is_file():
+                raise StageBlocked(BLOCKED_MISSING_EVIDENCE, "no model selection in this run")
+            return [_load_json(path)["selection"]["selected_model"]]
+        return []
+
+    def plan(self, ctx, stage):
+        module = self._module(stage)
+        lines = []
+        if hasattr(module, "prepare"):
+            lines.append(" ".join(self._command(ctx, stage, "prepare", "<project python>",
+                                                workers="<stats>")))
+        if self.models:
+            label = "every model" if self.models == "each" else "the selected model"
+            lines.append(f"<frozen runtime python> scripts/run_production_stage.py --stage "
+                         f"{stage.name} --phase model --model <{label}> --workers <scheduled> "
+                         f"--threads <run-pinned> ({self.model_workload})")
+        lines.append(" ".join(self._command(ctx, stage, "reduce", "<project python>"
+                                            if self.interpreter == "project" else "<BVSE python>",
+                                            workers="<stats>")))
+        return lines
+
+    def _run_phase(self, ctx, stage, phase, python, env, result, **kwargs):
+        command = self._command(ctx, stage, phase, python, **kwargs)
+        _, output = ctx.run_command(stage.name, command, env, failure_outcomes={
+            2: BLOCKED_MISSING_EVIDENCE, 3: VALIDATION_FAILURE})
+        result.commands.append(command)
+        manifest = Path(_last_json(output)["manifest"])
+        for name, item in _load_json(manifest)["outputs"].items():
+            key = f"{name}@{kwargs.get('model')}" if kwargs.get("model") else name
+            result.outputs[key] = {"path": item["path"], "sha256": item["sha256"]}
+        result.outputs[f"manifest:{phase}" + (f":{kwargs['model']}" if kwargs.get("model") else "")] = \
+            output_record(manifest)
+
+    def run(self, ctx, stage):
+        module = self._module(stage)
+        result = StageResult(stage.name, COMPLETED, f"{stage.name} runner complete")
+        stats = stage_allocation(ctx, stage.name, "statistics", "statistics_numpy")
+        result.allocations["statistics"] = stats.as_json()
+        python = self._python(ctx)
+        env = ctx.child_environment(None, 1)
+        if hasattr(module, "prepare"):
+            self._run_phase(ctx, stage, "prepare", python, env, result, workers=stats.workers)
+        for model in self._models(ctx):
+            runtime = ctx.runtimes[model]
+            if not runtime.python.is_file():
+                raise StageBlocked(BLOCKED_MISSING_EVIDENCE, f"frozen interpreter {runtime.python} absent")
+            allocation = stage_allocation(ctx, stage.name, model, self.model_workload)
+            result.allocations[model] = allocation.as_json()
+            self._run_phase(ctx, stage, "model", runtime.python,
+                            ctx.child_environment(runtime, allocation.threads_per_worker), result,
+                            model=model, workers=allocation.workers,
+                            threads=allocation.threads_per_worker)
+        self._run_phase(ctx, stage, "reduce", python, env, result, workers=stats.workers)
+        return result
+
+
 DEFAULT_ADAPTERS: dict[str, StageAdapter] = {
     "runtime_audit": RuntimeAuditAdapter(),
     "resource_profile": ResourceProfileAdapter(),
@@ -994,6 +1096,12 @@ DEFAULT_ADAPTERS: dict[str, StageAdapter] = {
     "estimate": EstimateAdapter(),
     "missing_runner": MissingRunnerAdapter(),
     "deferred": DeferredAdapter(),
+    "runner_project": RunnerAdapter(),
+    "runner_bvse": RunnerAdapter(interpreter="bvse"),
+    "runner_each_model_ml_neb": RunnerAdapter(models="each", model_workload="ml_neb_band"),
+    "runner_each_model_single_points": RunnerAdapter(models="each",
+                                                     model_workload="force_single_point"),
+    "runner_selected_model_ml_neb": RunnerAdapter(models="selected", model_workload="ml_neb_band"),
 }
 
 

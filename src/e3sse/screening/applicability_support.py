@@ -163,6 +163,10 @@ def fit_reference(
         "n_chemical_systems": len(set(groups.tolist())),
         "threshold_rule": "leave-one-chemical-system-out k-NN distance quantile",
         "unscaled_columns": sorted(int(c) for c in unscaled_columns),
+        # Per reference unit, its leave-one-chemical-system-out k-NN distance and system
+        # (the path-representation degeneracy checks and development support use them).
+        "loo_distances": loo.tolist(),
+        "reference_chemical_systems": groups.tolist(),
     }
 
 

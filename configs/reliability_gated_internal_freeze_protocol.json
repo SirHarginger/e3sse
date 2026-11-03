@@ -641,7 +641,15 @@
         "structure_source": "one pristine host structure per material_id from the same source for development, calibration and pool units (never nebDFT2k vacancy supercells); source confirmed by the server descriptor-availability audit",
         "gate0": "transition-metal/Hubbard-U exclusion (frozen pymatgen-transition-metal-union-mp2020-u-v1) and the nebDFT2k element criteria, evaluated from composition alone, identically for all populations",
         "development": "published-test chemical systems with nebDFT2k hops, spanning systems excluded, one structure per system by structure_rule, its h*_3 if that hop is a nebDFT2k hop; disjoint from P and Q",
-        "nebDFT2k_inclusion_assumption": "treating h* in nebDFT2k as covariate shift assumes LiTraj's inclusion depended on the modelled BVSE/structural covariates and not on DFT NEB success; stated with every Study-5 result"
+        "nebDFT2k_inclusion_assumption": "treating h* in nebDFT2k as covariate shift assumes LiTraj's inclusion depended on the modelled BVSE/structural covariates and not on DFT NEB success; stated with every Study-5 result",
+        "gate0_nebdft2k_criteria": {
+          "classification": "engineering_choice operationalizing parent study_5_contract.gate_0 ('same element and hop-length criteria as nebDFT2k'); covariate-only; pending statistical-validator and research-architect review",
+          "element_criterion": "every element of a Q chemical system occurs in at least one development or P chemical system (calibration-side element support)",
+          "hop_length_criterion": "the h*_3 hop length of a Q unit (descriptor hop_length_A from its pristine structure) lies within the closed range [min, max] of the development and P units' h*_3 hop lengths",
+          "missing": "a Q unit with an undefined hop length or unknown elements fails Gate 0 (fail closed) and is counted",
+          "applies_to": "Q only; development and P units are nebDFT2k hops by construction",
+          "implementation": "e3sse.production.runners.population.gate0_pool_decisions"
+        }
       },
       "model_selection_objective": {
         "implementation": "e3sse.screening.prospective_contract.select_prospective_model",
