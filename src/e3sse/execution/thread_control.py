@@ -61,6 +61,29 @@ def child_thread_environment(threads_per_worker: int) -> Iterator[dict[str, str]
                 os.environ[name] = value
 
 
+_INTEROP_SET_IN_THIS_PROCESS = False
+
+
+def _set_interop_threads_once(torch: Any) -> None:
+    """Fix torch's inter-op pool at most once per process.
+
+    A second ``torch.set_num_interop_threads`` call is never safe: torch 2.1 (the
+    frozen MatGL runtime) lets the C++ ``c10::Error`` escape the binding, which
+    aborts the process (SIGABRT) instead of raising.  Later calls (e.g. the
+    after-model-load re-check) only verify the value.
+    """
+
+    global _INTEROP_SET_IN_THIS_PROCESS
+    if _INTEROP_SET_IN_THIS_PROCESS or torch.get_num_interop_threads() == TORCH_INTEROP_THREADS:
+        return
+    try:
+        torch.set_num_interop_threads(TORCH_INTEROP_THREADS)
+    except RuntimeError:
+        # Newer torch raises instead of aborting; the check in the caller decides.
+        pass
+    _INTEROP_SET_IN_THIS_PROCESS = True
+
+
 def configure_process_threads(threads_per_worker: int, *, configure_torch: bool) -> dict[str, Any]:
     """Apply and verify the thread configuration inside the current process."""
 
@@ -76,11 +99,7 @@ def configure_process_threads(threads_per_worker: int, *, configure_torch: bool)
     if configure_torch:
         import torch
 
-        try:
-            torch.set_num_interop_threads(TORCH_INTEROP_THREADS)
-        except RuntimeError:
-            # Already fixed (e.g. serial in-process reuse); accept only the same value.
-            pass
+        _set_interop_threads_once(torch)
         torch.set_num_threads(threads_per_worker)
         intra, inter = torch.get_num_threads(), torch.get_num_interop_threads()
         if intra != threads_per_worker or inter != TORCH_INTEROP_THREADS:

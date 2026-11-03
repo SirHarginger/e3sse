@@ -200,3 +200,37 @@ def test_synthetic_li_vacancy_band_does_not_need_the_cubic_fluorite_builder(monk
     # Nearest Li-Li in ASE's 'Li2O fluorite' cell (Li on the fcc and one tetrahedral
     # site, as ase.build.bulk assigns it): a*sqrt(3)/4.  Operational geometry only.
     assert abs(hop - 4.62 * np.sqrt(3) / 4) < 1e-9
+
+
+def test_torch_interop_pool_is_set_once_per_process(monkeypatch):
+    """torch 2.1 (frozen MatGL runtime) aborts the process on a second
+    set_num_interop_threads; the after-model-load re-check must only verify."""
+
+    import types
+
+    from e3sse.execution import thread_control
+
+    class Abort(BaseException):  # stands in for SIGABRT: not catchable as RuntimeError
+        pass
+
+    state = {"interop": None, "intra": 8, "set_calls": 0}
+
+    def set_num_interop_threads(n):
+        state["set_calls"] += 1
+        if state["interop"] is not None:
+            raise Abort("cannot set number of interop threads after ... called")
+        state["interop"] = n
+
+    fake = types.SimpleNamespace(
+        set_num_interop_threads=set_num_interop_threads,
+        get_num_interop_threads=lambda: state["interop"] or 8,
+        set_num_threads=lambda n: state.update(intra=n),
+        get_num_threads=lambda: state["intra"])
+    monkeypatch.setitem(sys.modules, "torch", fake)
+    monkeypatch.setattr(thread_control, "_INTEROP_SET_IN_THIS_PROCESS", False)
+    for name in thread_control.THREAD_ENVIRONMENT_VARIABLES:
+        monkeypatch.setenv(name, "2")
+    for _ in range(3):  # before model load, after model load, serial reuse
+        observed = thread_control.configure_process_threads(2, configure_torch=True)
+        assert observed["torch_inter_op_threads"] == 1 and observed["torch_intra_op_threads"] == 2
+    assert state["set_calls"] == 1
