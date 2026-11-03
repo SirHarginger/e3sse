@@ -476,6 +476,17 @@ def installed_versions(names: Sequence[str]) -> dict[str, str | None]:
     return versions
 
 
+def canonical_distribution_name(name: str) -> str:
+    """PEP 503 normalized project name.
+
+    ``uv pip freeze`` writes normalized names (``ruamel-yaml``) while installed
+    metadata keeps the original spelling (``ruamel.yaml``); both sides of a lock
+    comparison must use the same normalization or dotted names look like drift.
+    """
+
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def _lock_pins(lock: Path) -> dict[str, str]:
     """``name==version`` lines of a pip/uv freeze lock (canonical names)."""
 
@@ -484,7 +495,7 @@ def _lock_pins(lock: Path) -> dict[str, str]:
         line = line.split("#", 1)[0].strip()
         if "==" in line and not line.startswith("-"):
             name, version = line.split("==", 1)
-            pins[name.strip().lower().replace("_", "-")] = version.split(";")[0].strip()
+            pins[canonical_distribution_name(name.strip())] = version.split(";")[0].strip()
     return pins
 
 
@@ -514,7 +525,7 @@ def verify_runtime(
     drift = []
     if lock is not None:
         actual = {
-            dist.metadata["Name"].lower().replace("_", "-"): dist.version
+            canonical_distribution_name(dist.metadata["Name"]): dist.version
             for dist in importlib.metadata.distributions()
         }
         drift = sorted(name for name, version in _lock_pins(lock).items()

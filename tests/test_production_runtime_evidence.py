@@ -142,3 +142,28 @@ def test_memory_floor_throttles_launches_without_changing_results(tmp_path):
     manifest = json.loads(throttled.manifest_path.read_text())
     assert manifest["memory_throttle_events"] > 0
     assert np.isclose(sum(r["value"] for r in throttled.results.values()), 140)
+
+
+def test_lock_verification_canonicalizes_dotted_distribution_names(tmp_path, monkeypatch):
+    """uv writes ``ruamel-yaml`` while metadata says ``ruamel.yaml``: not drift."""
+
+    from importlib import metadata
+
+    from e3sse.softening import study1_inference
+
+    class Dist:
+        def __init__(self, name, version):
+            self.metadata, self.version = {"Name": name}, version
+
+    installed = [Dist("ruamel.yaml", "0.18.6"), Dist("Zope.Interface", "7.0"),
+                 Dist("typing_extensions", "4.12.2")]
+    monkeypatch.setattr(metadata, "distributions", lambda: installed)
+    lock = tmp_path / "lock.txt"
+    lock.write_text("ruamel-yaml==0.18.6\nzope-interface==7.0\ntyping-extensions==4.12.2\n")
+    environment = {"python_version": sys.version.split()[0], "pinned_packages": {}}
+    assert study1_inference.verify_runtime(environment, None, lock)["lock_verified"] is True
+    lock.write_text("ruamel-yaml==0.18.5\n")  # a real version difference is still drift
+    import pytest
+
+    with pytest.raises(RuntimeError, match="ruamel-yaml"):
+        study1_inference.verify_runtime(environment, None, lock)

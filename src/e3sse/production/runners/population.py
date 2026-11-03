@@ -3,10 +3,14 @@
 From the Gate-1 structural audit (one structure per chemical system, d = 3
 rate-limiting hop) and the label-free descriptors:
 
-* development units: published-test systems (h*_3 a nebDFT2k hop);
+* development units: systems with published-test contact (test-only or spanning),
+  built on non-validation nebDFT2k materials;
 * P units: published-train-only systems (owner decision 2026-11-02);
-* Q units: BVEL13k systems outside the partition universe that pass Gate 0
-  (``amendments.prospective.populations.gate0_nebdft2k_criteria``);
+* P/development unit hop: h*_3 if a nebDFT2k hop, else the nearest-bottleneck
+  nebDFT2k hop (``screening.gate1_populations.unit_hop``; Study-5 revision 2026-11-03);
+* P calibration and Q units pass Gate 0
+  (``amendments.prospective.populations.gate0_nebdft2k_criteria``); TM/Hubbard-U
+  systems are a stratum, not excluded;
 * weight-fit slices (``density_ratio.settings.holdout_rule``): a P or Q system is in
   the slice iff SHA256('e3sse.weight-holdout' NUL parent protocol ID NUL system),
   read as an integer over 2^256, is below ``holdout_fraction``.  Membership depends
@@ -119,6 +123,25 @@ def gate0_decisions(units: list[dict[str, Any]], descriptors: dict[str, Any], *,
             "reference_units": len(complete)}
 
 
+DEVELOPMENT_RULE = (
+    "systems with published-test contact (test-only or spanning) and nebDFT2k hops, "
+    "TM/Hubbard-U included; structure = lowest-E*_3 3-D-percolating non-validation nebDFT2k "
+    "material; hop = its h*_3 if a nebDFT2k hop, else its nebDFT2k hop minimizing "
+    "|em_bvse - E*_3| (ties canonical hop key)")
+
+
+def development_manifest(units, parent_protocol_id: str) -> dict[str, Any]:
+    """Hashed development manifest: every development unit, before any filter."""
+
+    development = [u for u in units if u.get("role", u.get("side")) == "development"]
+    manifest = {"schema": DEVELOPMENT_SCHEMA, "parent_protocol_id": parent_protocol_id,
+                "rule": DEVELOPMENT_RULE,
+                "hop_ids": sorted(u.get("unit_id", u.get("unit_edge_id")) for u in development),
+                "chemical_systems": sorted(u["chemical_system"] for u in development)}
+    manifest["manifest_sha256"] = canonical_sha256(manifest)
+    return manifest
+
+
 def build_population(units, descriptors, *, parent_protocol_id: str, fraction: float
                      ) -> tuple[dict[str, Any], dict[str, Any]]:
     gate0 = gate0_decisions(units, descriptors, parent_protocol_id=parent_protocol_id,
@@ -129,7 +152,10 @@ def build_population(units, descriptors, *, parent_protocol_id: str, fraction: f
         side = unit["side"]
         record = {"unit_key": key, "unit_id": unit["unit_edge_id"], "side": side,
                   "chemical_system": unit["chemical_system"], "material_id": unit["material_id"],
-                  "rate_limiting_edge_ids": unit["rate_limiting_edge_ids"]}
+                  "rate_limiting_edge_ids": unit["rate_limiting_edge_ids"],
+                  "unit_edge_ids": unit["unit_edge_ids"], "unit_hop_role": unit["unit_hop_role"],
+                  "critical_bvse_barrier_eV": unit["critical_bvse_barrier_eV"],
+                  "tm_hubbard_u": unit["tm_hubbard_u"]}
         if side == "development":
             record["role"] = "development"
         else:
@@ -145,14 +171,7 @@ def build_population(units, descriptors, *, parent_protocol_id: str, fraction: f
             base = "calibration" if side == "P" else "pool"
             record["role"] = f"{base}_weight_slice" if in_slice else base
         records.append(record)
-    development = sorted(r["unit_id"] for r in records if r["role"] == "development")
-    manifest = {"schema": DEVELOPMENT_SCHEMA, "parent_protocol_id": parent_protocol_id,
-                "rule": "published-test systems with nebDFT2k hops, spanning systems excluded, one "
-                        "structure per system by structure_rule, its h*_3 (a nebDFT2k hop)",
-                "hop_ids": development,
-                "chemical_systems": sorted(r["chemical_system"] for r in records
-                                           if r["role"] == "development")}
-    manifest["manifest_sha256"] = canonical_sha256(manifest)
+    manifest = development_manifest(records, parent_protocol_id)
     counts: dict[str, int] = {}
     for record in records:
         counts[record["role"]] = counts.get(record["role"], 0) + 1
@@ -164,38 +183,43 @@ def build_population(units, descriptors, *, parent_protocol_id: str, fraction: f
     return population, manifest
 
 
-SIDE_SPLIT = {"development": "test", "P": "train"}
+SIDE_SPLITS = {"development": ("test", "train"), "P": ("train",)}
 
 
 def validate_units(units: list[dict[str, Any]], membership) -> None:
     """Fail closed on structurally inconsistent units.
 
-    * every rate_limiting_edge_ids entry is a direction of the unit's one physical hop
-      (one hop per unit: no tie between distinct hops is resolved silently);
-    * development and P units are included nebDFT2k hops of the frozen membership in
-      the split their side requires (development: published test; P: published train).
+    * every unit_edge_ids entry is a direction of the unit's one physical hop (one hop
+      per unit: no tie between distinct hops is resolved silently), and an exact unit's
+      hop is its h*_3;
+    * development and P units are included nebDFT2k hops of the frozen membership in a
+      split their side allows (development: test or train, never validation; P: train).
     """
 
     from e3sse.screening.rate_limiting_hop import canonical_hop, parse_edge_id
 
     hops = {r["hop_id"]: r for r in membership if r.get("record_kind") == "nebdft2k_hop"}
     for unit in units:
-        edges = [parse_edge_id(e) for e in unit["rate_limiting_edge_ids"]]
+        edges = [parse_edge_id(e) for e in unit["unit_edge_ids"]]
         keys = {(e["material_id"], canonical_hop(e["source"], e["target"], e["offset"]))
                 for e in edges}
         own = parse_edge_id(unit["unit_edge_id"])
         own_key = (own["material_id"], canonical_hop(own["source"], own["target"], own["offset"]))
         if keys != {own_key}:
-            raise RunnerValidationError(f"{unit['chemical_system']}: rate_limiting_edge_ids name "
+            raise RunnerValidationError(f"{unit['chemical_system']}: unit_edge_ids name "
                                         "more than one physical hop")
-        split = SIDE_SPLIT.get(unit["side"])
-        if split is None:
+        if (unit["unit_hop_role"] == "rate_limiting_exact"
+                and not set(unit["unit_edge_ids"]) <= set(unit["rate_limiting_edge_ids"])):
+            raise RunnerValidationError(f"{unit['chemical_system']}: exact unit is not its h*_3")
+        splits = SIDE_SPLITS.get(unit["side"])
+        if splits is None:
             continue
-        record = hops.get(unit["unit_edge_id"])
-        if (record is None or record.get("eligibility_status") != "included"
-                or record.get("published_split") != split):
-            raise RunnerValidationError(f"{unit['side']} unit {unit['unit_edge_id']} is not an "
-                                        f"included published-{split} nebDFT2k hop")
+        for edge in unit["unit_edge_ids"]:
+            record = hops.get(edge)
+            if (record is None or record.get("eligibility_status") != "included"
+                    or record.get("published_split") not in splits):
+                raise RunnerValidationError(f"{unit['side']} unit {edge} is not an included "
+                                            f"nebDFT2k hop in published split {splits}")
 
 
 def run(ctx: RunnerContext) -> dict[str, Any]:

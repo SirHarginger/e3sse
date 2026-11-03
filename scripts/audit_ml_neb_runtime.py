@@ -35,8 +35,10 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 RUNTIME_AUDIT_SCHEMA = "e3sse.production.ml-neb-runtime-audit"
+# study1_inference.py holds the lock/pin verification, so a fix there re-runs the audit.
 CODE_FILES = ("scripts/audit_ml_neb_runtime.py", "src/e3sse/barriers/ml_neb.py",
-              "src/e3sse/screening/prospective_contract.py")
+              "src/e3sse/screening/prospective_contract.py",
+              "src/e3sse/softening/study1_inference.py")
 CHECK_FAILED_EXIT = 3  # the audit ran and recorded a failed check (1 = crashed)
 # ASE's NEB method-name -> implementation class (identical in ASE 3.22 to 3.29).
 NEB_METHOD_CLASSES = {"aseneb": "ASENEBMethod", "improvedtangent": "ImprovedTangentMethod",

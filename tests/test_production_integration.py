@@ -240,7 +240,9 @@ def _descriptor(family: str, *, hop: float = 2.5, jitter: float = 0.0, far: bool
 
 def _unit(side: str, system: str, hop: str):
     return {"side": side, "chemical_system": system, "unit_edge_id": hop,
-            "material_id": hop.split("_")[0], "rate_limiting_edge_ids": [hop]}
+            "material_id": hop.split("_")[0], "rate_limiting_edge_ids": [hop],
+            "unit_edge_ids": [hop], "unit_hop_role": "rate_limiting_exact",
+            "critical_bvse_barrier_eV": 0.4, "tm_hubbard_u": False}
 
 
 def test_discovery_keeps_every_attrition_category_distinct(tmp_path, monkeypatch):

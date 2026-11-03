@@ -363,9 +363,9 @@
         "conformal calibration set: identical ML-NEB pipeline, known DFT barriers",
         "prospective BVEL13k pool: identical pipeline"
       ],
-      "development_set": "published-test primary-population hops of the fixed-geometry transfer analysis, excluding chemical systems that span published splits",
+      "development_set": "one unit per chemical system with published-test contact (published-test-only or spanning published splits) and nebDFT2k hops, TM/Hubbard-U systems included; unit hop by populations.calibration_side_unit_rule on non-validation materials. Study-5 revision 2026-11-03 (count-informed, outcome-free; statistical-validator and research-architect)",
       "model_selection_rule": "score the deployed predictor (ML-NEB under the frozen ML-NEB rule, representation-support gate, family SRT, correct-or-raw) on the development set; lowest MAE, ties by RMSE; requires ML-NEB on development hops; frozen before any conformal-calibration outcome is read; development outcomes read via a dedicated access purpose restricted to the hashed development manifest",
-      "calibration_set": "published-train primary-population nebDFT2k hops; never used to select the model or tune ML-NEB",
+      "calibration_set": "one unit per published-train-only chemical system with nebDFT2k hops, TM/Hubbard-U systems included, unit hop by populations.calibration_side_unit_rule; never used to select the model, tune ML-NEB, build the support reference C/tau_d or the Gate-0 envelope. Study-5 revision 2026-11-03 (count-informed, outcome-free; statistical-validator and research-architect)",
       "s_source": "pooled s from MPLiTrj frames of training-side chemical systems without nebDFT2k hops (parent study4_predictor_calibration_independence pattern)",
       "validation_split": "remains the sealed reserve",
       "fixed_geometry_role": "clean physics validation of SRT; not the deployment predictor",
@@ -373,13 +373,13 @@
       "threshold_eV": 0.5,
       "literature_check": "only after the shortlist manifest is frozen and hashed",
       "dependence_unit": "one structure per chemical system and its rate-limiting hop h*_3: the first hop, in ascending (BVSE barrier, canonical hop key) order, whose addition makes the network 3-D percolating (minimax bottleneck, screening.rate_limiting_hop); covariate-only; identical for development, P and Q",
-      "guarantee_wording": "approximate FDR control under stated assumptions (exchangeability after weighting, covariate-only selection, estimated density ratios); not a formal guarantee",
+      "guarantee_wording": "approximate FDR control under stated assumptions (exchangeability after weighting, covariate-only selection, estimated density ratios, and hop-role invariance: the LiTraj-protocol DFT barrier of a hop given the frozen label-free covariates does not depend on whether the hop is its network's bottleneck); the target Y is the LiTraj-protocol barrier (non-spin-polarised PBE, no U) of the pool unit's rate-limiting hop h*_3 for every unit including TM/Hubbard-U systems; not a formal guarantee",
       "known_limitation": "nebDFT2k retains only converged NEBs, a possible selection on Y given X that weighting cannot correct",
       "development_set_reuse": "declared: Study 5 model selection reuses Study-2a published-test outcomes, consistent with Research Design 5.10 'best-validated model'",
       "g1_contingency": "if G1 fails, Research Design 6: selection proceeds with raw ML-NEB scores",
       "support_gate": {
         "metric": "d(x, C): mean Euclidean distance to the k=5 nearest neighbours in the original representation space (amendments.representation normalization); never on PCA/UMAP coordinates",
-        "support_population_C": "the development population: per-system rate-limiting development hops (see populations.development)",
+        "support_population_C": "the development population: one unit hop per development system (populations.calibration_side_unit_rule, rate_limiting_exact or bottleneck_proxy), TM/Hubbard-U included",
         "threshold": "tau_d = Q_q of leave-one-chemical-system-out k-NN distances over the development population (applicability_support.fit_reference), q = deployment_gate.quantile_level",
         "rationale": "taking C and tau_d from the conformal calibration set would make the predictor depend asymmetrically on calibration covariates (statistical-validator and research-architect reviews); a disjoint development set keeps the predictor a fixed function of X",
         "selective_analysis": "unsupported -> abstain",
@@ -571,7 +571,7 @@
         }
       },
       "density_ratio": {
-        "features": "the same label-free descriptor set as the descriptor fallback, but a separate quantity from the support score",
+        "features": "the label-free descriptor set of the descriptor fallback plus E*_3 (critical BVSE barrier of the unit's structure) and the TM/Hubbard-U indicator (composition only); a separate quantity from the support score. The unit-hop bottleneck gap (em_bvse - E*_3) and the rate_limiting_exact indicator are never features (every pool unit has gap 0, which would zero every proxy calibration weight). Implementation: e3sse.production.runners.density.density_features",
         "model": "probabilistic classifier, pool vs calibration-population covariates; weights w = P(pool|x)/P(cal|x) times the class-size ratio",
         "diagnostic": "classifier AUC reported; near 0.5 supports unweighted selection as a sensitivity",
         "status": "proposed; blocking until statistical-validator review",
@@ -687,25 +687,25 @@
           "selected": "units selected by WCS"
         },
         "fdr_target_population": "FDR statements apply only to the conformal_predictor_eligible population on which WCS was run; the full attrition funnel (Gate 1 -> attempted -> converged -> supported -> eligible -> selected) is reported separately with explicit counts",
-        "P": "eligible_P(system) = published-train-only system (every membership record of the system has published_split 'train'; published-validation systems are excluded by the parent published_validation_split_role rule and systems spanning published splits are excluded) with nebDFT2k hops AND not in the development set AND passes Gate 0 AND the structure chosen by structure_rule has a 3-D percolating network AND its rate-limiting hop h*_3 is a nebDFT2k hop (else ineligible and counted, never re-chosen) AND the frozen ML-NEB converges on h*_3 AND the regenerated BVSE path reproduces nebDFT2k _init.xyz within frozen tolerance (calibration-only filter, declared; pool units cannot be filtered this way). Owner decision 2026-11-02.",
-        "Q": "eligible_Q(system) = BVEL13k system outside the partition universe and the development set AND passes Gate 0 AND the structure chosen by structure_rule has a 3-D percolating network AND the frozen ML-NEB converges on h*_3",
-        "structure_rule": "within a chemical system, the structure with the lowest critical BVSE barrier E*_3, ties by ascending material_id (covariate-only, identical for P and Q)",
+        "P": "eligible_P(system) = published-train-only system (every membership record has published_split 'train'; validation-only and spanning systems excluded) with nebDFT2k hops, TM/Hubbard-U included, AND not in the development set AND a 3-D-percolating nebDFT2k structure exists AND the unit hop of populations.calibration_side_unit_rule passes Gate 0 AND the frozen ML-NEB converges on that hop AND its regenerated BVSE path reproduces nebDFT2k _init.xyz within the frozen tolerance (calibration-only filter, declared). Never re-chosen. Owner decision 2026-11-02 (train-only) retained; Study-5 revision 2026-11-03 (count-informed, outcome-free; statistical-validator and research-architect)",
+        "Q": "eligible_Q(system) = BVEL13k system outside the partition universe and the development set, TM/Hubbard-U included, AND passes Gate 0 AND the structure chosen by structure_rule has a 3-D percolating network AND the frozen ML-NEB converges on h*_3",
+        "structure_rule": "Q (pool): within a chemical system, the structure with the lowest critical BVSE barrier E*_3 among all materials of the structure_universe, ties by ascending material_id. P and development: calibration_side_unit_rule (declared deviation from 'identical for P and Q', covariate-only; E*_3 enters the density-ratio features)",
         "dimension_d": "d = 3, fixed by scientific reasoning before any count or outcome (macroscopic polycrystalline conduction needs a 3-D percolating network; LiTraj targets 3-D percolation); d = 1 is a descriptive sensitivity count only",
         "additional_filters_recorded": "membership of h* in nebDFT2k is a dataset-construction filter on the P side; em_bvse and E*_d enter the density-ratio features so the filter is modelled as covariate shift",
         "weight_slices": "frozen SHA-ranked held-out slices of eligible_P and eligible_Q systems, disjoint from every calibration and test unit, are used only to fit w_hat",
         "implementation": "e3sse.screening.prospective_contract.funnel; e3sse.screening.rate_limiting_hop.rate_limiting_hop(dimension=3)",
-        "counts": "server evidence pending (linkage audit); never chosen from counts",
+        "counts": "redesign informed by outcome-free structural counts only (frozen-rule server audit: development 0, P 2, Q 83 systems; TM/Hubbard-U x material-level published split x rate-limiting-hop-in-nebDFT2k); disclosed. Expected under the revision (public LiTraj identifiers, outcome-free): development 121, P 82, Q ~398 structural upper bounds before Gate 0, BVSE reproduction and ML-NEB",
         "structure_universe": "all materials with the same normalised chemical system (protocol.partitions.normalize_chemical_system) in nebBVSE122k union BVEL13k; identical for P and Q",
         "chemical_system_normaliser": "protocol.partitions.normalize_chemical_system, applied to every dataset's chemsys (BVEL13k systems recomputed from structure species where provided)",
         "structure_source": "one pristine host structure per material_id from the same source for development, calibration and pool units (never nebDFT2k vacancy supercells); source confirmed by the server descriptor-availability audit",
-        "gate0": "transition-metal/Hubbard-U exclusion (frozen pymatgen-transition-metal-union-mp2020-u-v1) and the nebDFT2k element criteria, evaluated from composition alone, identically for all populations",
-        "development": "published-test chemical systems with nebDFT2k hops, spanning systems excluded, one structure per system by structure_rule, its h*_3 if that hop is a nebDFT2k hop; disjoint from P and Q; units whose regenerated BVSE path does not reproduce nebDFT2k _init.xyz within the frozen tolerance are excluded from development ML-NEB and counted (declared filter, the same as for P; the hashed development manifest lists the pre-filter development set)",
-        "nebDFT2k_inclusion_assumption": "treating h* in nebDFT2k as covariate shift assumes LiTraj's inclusion depended on the modelled BVSE/structural covariates and not on DFT NEB success; stated with every Study-5 result",
+        "gate0": "the nebDFT2k element and hop-length envelope (gate0_nebdft2k_criteria), evaluated from composition and the unit hop, identically for P calibration and Q units. In Study 5 the TM/Hubbard-U rule (frozen pymatgen-transition-metal-union-mp2020-u-v1) labels a reported stratum and a density-ratio covariate; it no longer excludes (Study-5 revision 2026-11-03 (count-informed, outcome-free; statistical-validator and research-architect); parent study_5_contract.gate_0 'transition-metal-free' revised, see declared_scope_revisions). Studies 1-4 keep the non-TM primary population unchanged",
+        "development": "systems with published-test contact (published-test-only or spanning published splits) and nebDFT2k hops, TM/Hubbard-U included; structure and hop by calibration_side_unit_rule over the system's non-validation nebDFT2k materials; disjoint from P and Q; units whose regenerated BVSE path does not reproduce nebDFT2k _init.xyz within the frozen tolerance are excluded from development ML-NEB and counted; the hashed development manifest lists the pre-filter set. Development outcome reads (including published-train hops of spanning systems) are only through the prospective_model_selection purpose restricted to the manifest hop IDs; the other hops of these systems stay sealed. Study-5 revision 2026-11-03 (count-informed, outcome-free; statistical-validator and research-architect)",
+        "nebDFT2k_inclusion_assumption": "treating h* in nebDFT2k as covariate shift assumes LiTraj's inclusion depended on the modelled BVSE/structural covariates and not on DFT NEB success; stated with every Study-5 result; and hop-role invariance: for P and development units built on a bottleneck_proxy hop, the hop's DFT barrier given the frozen covariates does not depend on whether the hop is its network's bottleneck (stated with every Study-5 result)",
         "gate0_nebdft2k_criteria": {
           "classification": "owner decision 2026-11-03 operationalizing parent study_5_contract.gate_0 ('same element and hop-length criteria as nebDFT2k'); covariate-only; recommended by the statistical-validator",
-          "reference_set": "development units and P weight-fit-slice units (identity-only SHA-256 slice rule), disjoint from every conformal-calibration unit and every Q unit",
+          "reference_set": "development units and P weight-fit-slice units (identity-only SHA-256 slice rule), TM/Hubbard-U included, disjoint from every conformal-calibration unit and every Q unit",
           "element_criterion": "every element of the unit's chemical system (the chemical_system key split on '-') occurs in at least one reference chemical system",
-          "hop_length_criterion": "the unit's h*_3 hop length (descriptor hop_length_A from its pristine structure) lies within the closed range [min, max] of the reference units' h*_3 hop lengths",
+          "hop_length_criterion": "the unit's hop length (descriptor hop_length_A of its unit hop from its pristine structure: h*_3 for Q, the calibration_side_unit_rule hop for P and development) lies within the closed range [min, max] of the reference units' unit-hop lengths",
           "missing": "any unit, including a P weight-fit-slice reference unit, with an undefined hop length or unknown elements is excluded as missing covariate evidence (role excluded_missing_covariate), counted separately from Gate-0 failures, and never shapes the envelope",
           "applies_to": "P calibration units and Q units identically (parent: 'identically for all populations'); development and P weight-fit-slice units define the reference",
           "statistical_rationale": "the envelope never depends on a conformal-calibration or test covariate, so weighted exchangeability of calibration and test units (Theorem 3.1) and the independence of w_hat from calibration units (Theorem 3.5) are preserved",
@@ -713,12 +713,32 @@
           "rationale": "conformal-calibration units stay outside every threshold/envelope construction; an envelope from the pre-calibration population only gives the cleanest weighted-exchangeability argument (Theorem 3.1) and keeps w_hat independent of calibration units (Theorem 3.5); the rule is fixed before any target outcome is read; all nebDFT2k is not used merely to widen support",
           "owner_alternative_rejected": "all-nebDFT2k envelope (includes calibration-unit covariates) and recovered LiTraj construction criteria: not adopted"
         },
-        "wcs_population": "converged, non-hold-out pool units with a density weight; a converged unit without a weight (missing descriptor) is counted as no_density_weight and is outside the FDR statement; weight-fit hold-out units are outside the applicability-coverage denominator"
+        "wcs_population": "converged, non-hold-out pool units with a density weight; a converged unit without a weight (missing descriptor) is counted as no_density_weight and is outside the FDR statement; weight-fit hold-out units are outside the applicability-coverage denominator",
+        "calibration_side_unit_rule": {
+          "structure": "the lowest-E*_3 3-D-percolating nebDFT2k material of the system (development: non-validation materials only), ties by ascending material_id",
+          "hop": "its h*_3 if h*_3 is a nebDFT2k hop (unit_hop_role rate_limiting_exact); otherwise its nebDFT2k hop minimising |em_bvse - E*_3|, hops above and below E*_3 both allowed, ties by ascending canonical hop key (unit_hop_role bottleneck_proxy); the signed gap em_bvse - E*_3 is recorded per unit",
+          "never": "re-chosen after Gate 0, BVSE reproduction or ML-NEB; chosen from any outcome",
+          "implementation": "e3sse.screening.gate1_populations.unit_hop",
+          "rationale": "nebDFT2k sampled hops rather than 3-D bottlenecks (59 of 473 3-D-percolating nebDFT2k materials have h*_3 in nebDFT2k); with the rate-limiting hop only, at most ~17 train-only systems exist and WCS at alpha 0.2 cannot select (p-value floor ~1/(n+1))"
+        },
+        "study5_reporting": {
+          "strata": "TM/Hubbard-U and non-TM counts (calibration, selected) per stratum, descriptive; no stratum-level FDR claim (a non-TM-only WCS has ~5 calibration systems: infeasible)",
+          "sensitivities_labelled_never_primary": [
+            "rate-limiting-only: WCS on rate_limiting_exact calibration units with the same w_hat",
+            "non-TM subset of every population (descriptive)",
+            "unweighted WCS",
+            "clipped weights",
+            "raw ML-NEB scores without SRT"
+          ],
+          "falsification_check": "after unsealing, compare calibration score distributions of rate_limiting_exact and bottleneck_proxy units (and TM vs non-TM); reported only, never a switch",
+          "diagnostics": "share of rate_limiting_exact units per side; signed bottleneck gap distribution; w_hat effective sample size, maximum weight, unselectable fraction",
+          "framing": "TM/Hubbard-U shortlist members: electronic insulation not assessed, never called electrolyte discoveries; SRT is not claimed validated on TM systems (family scales and the G1 switch come from non-TM evidence and are applied as frozen)"
+        }
       },
       "model_selection_objective": {
         "implementation": "e3sse.screening.prospective_contract.select_prospective_model",
         "feasibility": "relative: convergence_rate and independent_support_coverage (measured on the label-free Q weight-fit slice, never on the development set that defines tau_d) each >= 0.5 x the best model's value",
-        "primary_loss": "MAE (eV) of the complete deployed predictor on the per-system rate-limiting development hops converged for every feasible model; feasibility is decided first, then the common set",
+        "primary_loss": "MAE (eV) of the complete deployed predictor on the per-system development unit hops converged for every feasible model; feasibility is decided first, then the common set",
         "tie_breakers": [
           "lower RMSE",
           "higher convergence_rate",
@@ -727,7 +747,7 @@
         "never": "fixed-geometry raw MAE, embedding quality, prospective selection count, test error, prestige",
         "winners_curse": "the selected model's development MAE is never reported as a performance estimate"
       },
-      "development_manifest_sha256": "server_evidence_pending"
+      "development_manifest_sha256": "fc41f5194eec20522222b5b2881f255cf868230e182e96ab27cc4ef6ae0c6628"
     },
     "scope": {
       "classification": "project owner's decision of 2026-11-01",
@@ -884,9 +904,18 @@
     },
     {
       "id": "ions_bvse_version_pin",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "pin the ions package version for BVSE initialization and verify its paths reproduce nebDFT2k _init.xyz for calibration hops; build the BVSE runtime from a lock and pin runners.bvse.environment_lock {path, sha256} (the runner verifies every package version against it)",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "runners.bvse (ions 0.4.1, environment_lock pinned in configs/production_execution.json)",
+        "evidence": "this run's bvse_reproduction stage: pinned runtime verified against its lock; pin confirmed when more checked calibration-side paths reproduce _init.xyz than not (criterion fixed 2026-11-03 before any BVSE evidence)",
+        "verified_by_preflight_checks": [
+          "run_evidence:bvse_reproduction",
+          "bvse_ions_pin_confirmed"
+        ]
+      }
     },
     {
       "id": "failed_neb_policy",
@@ -912,9 +941,18 @@
     },
     {
       "id": "prospective_gate1_rule",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "rate-limiting-hop rule on the BVSE percolating network, from the G0-audited BVEL13k/nebBVSE122k schemas (data-engineer)",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.populations (d = 3, structure_rule, calibration_side_unit_rule); e3sse.screening.rate_limiting_hop",
+        "evidence": "server Gate-1 linkage audit on the G0-audited schemas: 1681/1681 nebDFT2k edges in nebBVSE122k, 473 3-D-percolating calibration-side materials, 4586 3-D-percolating BVEL13k materials, 0 ties, 0 ambiguous; re-verified by every preflight",
+        "verified_by_preflight_checks": [
+          "gate1_linkage",
+          "gate1_structural_populations"
+        ]
+      }
     },
     {
       "id": "weighted_conformal_publication_check",
@@ -1017,15 +1055,33 @@
     },
     {
       "id": "path_representation_mapping",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "freeze the per-model path-level representation after embedding verification (mlip-specialist), before any calibration outcome",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.representation.path_representation (e3sse.production.runners.representation.frozen_path_representation)",
+        "evidence": "this run's development_ml_neb and path_representation stages, after the six embedding evidence reports pinned in amendments.representation",
+        "verified_by_preflight_checks": [
+          "run_evidence:development_ml_neb",
+          "run_evidence:path_representation"
+        ]
+      }
     },
     {
       "id": "rate_limiting_hop_algorithm",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "data-engineer verification of amendments.prospective.rate_limiting_hop_algorithm on the actual data",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.rate_limiting_hop_algorithm; e3sse.screening.rate_limiting_hop",
+        "evidence": "same server linkage audit; structure-identity mapping by material_id/edge_id prefix verified on every edge",
+        "verified_by_preflight_checks": [
+          "gate1_linkage",
+          "gate1_structural_populations"
+        ]
+      }
     },
     {
       "id": "server_unreachable",
@@ -1084,31 +1140,57 @@
     },
     {
       "id": "bvse_reproduction",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "ions version pin and ML-NEB-to-nebDFT2k path correspondence from the server reproduction audit; from the reproduction report (max position and BVSE-barrier difference distributions) decide whether to freeze ml_neb.bvse_recipe.pool_barrier_tolerance_eV",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.ml_neb.bvse_recipe; pool_barrier_tolerance_rule (owner decision 2026-11-03: tolerance stays null, differences recorded only)",
+        "evidence": "this run's bvse_reproduction report (reproduction counts, position and barrier-difference distributions); non-reproducing units excluded and counted",
+        "verified_by_preflight_checks": [
+          "run_evidence:bvse_reproduction",
+          "bvse_ions_pin_confirmed"
+        ]
+      }
     },
     {
       "id": "descriptor_availability",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "source-field availability of every descriptor on the real schemas (data-engineer server audit)",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.support_gate.descriptor_space",
+        "evidence": "this run's descriptor_availability stage (per-unit availability; a unit with any missing feature is unsupported and counted)",
+        "verified_by_preflight_checks": [
+          "run_evidence:descriptor_availability"
+        ]
+      }
     },
     {
       "id": "development_manifest",
-      "blocking": true,
+      "blocking": false,
       "required_resolution": "build and pin development_manifest_sha256 from the server linkage audit before any development outcome",
-      "blocker_class": "server_evidence"
+      "blocker_class": "server_evidence",
+      "resolution": {
+        "status": "resolved",
+        "rule": "amendments.prospective.development_manifest_sha256",
+        "evidence": "pinned from the outcome-free population rule on the G0-identical public LiTraj identifiers; the development_population stage refuses a different manifest and preflight re-checks the pin",
+        "verified_by_preflight_checks": [
+          "run_evidence:development_population",
+          "development_manifest_pin"
+        ]
+      }
     },
     {
       "id": "gate0_reference_envelope",
       "blocking": false,
       "blocker_class": "owner_decision",
-      "required_resolution": "confirm the Gate-0 element and hop-length envelope (amendments.prospective.populations.gate0_nebdft2k_criteria). Statistical-validator: the earlier draft built it from development and all P units, including conformal-calibration units, which breaks weighted exchangeability; implemented default: development + P weight-fit-slice units, applied identically to P calibration and Q units. Research-architect alternative: LiTraj's own nebDFT2k construction criteria if recoverable, else the all-nebDFT2k envelope as a declared deviation. Record the decision before any count is inspected.",
+      "required_resolution": "confirm the Gate-0 element and hop-length envelope (amendments.prospective.populations.gate0_nebdft2k_criteria). Statistical-validator: the earlier draft built it from development and all P units, including conformal-calibration units, which breaks weighted exchangeability; implemented default: development + P weight-fit-slice units, applied identically to P calibration and Q units. Research-architect alternative: LiTraj's own nebDFT2k construction criteria if recoverable, else the all-nebDFT2k envelope as a declared deviation. Recorded before any outcome is inspected (count-informed redesign 2026-11-03 disclosed).",
       "resolution": {
         "status": "resolved",
         "rule": "amendments.prospective.populations.gate0_nebdft2k_criteria",
-        "evidence": "owner decision 2026-11-03: reference population = development units + P density-ratio weight-fit-slice units; envelope applied identically to P conformal-calibration and Q units; calibration units never construct it; all-nebDFT2k not used to widen support"
+        "evidence": "owner decision 2026-11-03: reference population = development units + P density-ratio weight-fit-slice units; envelope applied identically to P conformal-calibration and Q units; calibration units never construct it; all-nebDFT2k not used to widen support; 2026-11-03 Study-5 revision: reference = development + P weight-slice unit hops, TM/Hubbard-U included; principle unchanged (calibration units never build the envelope)"
       }
     },
     {
@@ -1119,7 +1201,7 @@
       "resolution": {
         "status": "resolved",
         "rule": "amendments.prospective.populations.P",
-        "evidence": "owner decision 2026-11-02: P = published-train systems only; validation-split and spanning systems excluded"
+        "evidence": "owner decision 2026-11-02: P = published-train systems only; validation-split and spanning systems excluded; re-affirmed by the 2026-11-03 Study-5 revision: P stays train-only; spanning systems (published-test contact) are development units"
       }
     },
     {
@@ -1182,7 +1264,8 @@
     "registration-gated historical protocol -> internal-freeze protocol governance revision made before production outcome inspection: external OSF registration replaced by an internal version-controlled freeze (see governance)",
     "registration-gated historical protocol -> internal-freeze protocol scope revision made before production outcome inspection: registration-gated historical protocol planned Study 3 (P2) and an independent Study-2b campaign; internal-freeze protocol formally defers transport validation (Study 3, P2, RD contribution C1 transport claims) and reuses the deployment-required ML-NEB calibration runs to evaluate relaxed-path behaviour",
     "pre-internal-freeze uncommitted work added a Study-1 OSF-pending path (study1_training_only); it was never executed, is archived on branch archive/osf-pending-study1-work as historical development evidence, and is not part of the active protocol's code ancestry",
-    "internal-freeze protocol Study-4 revision made before production outcome inspection: per-repeat gate thresholds come from an identity-only threshold slice of the training/calibration side, removed from that repeat's calibration units for every predictor (amendments.selection.declared_change_calibration_side)"
+    "internal-freeze protocol Study-4 revision made before production outcome inspection: per-repeat gate thresholds come from an identity-only threshold slice of the training/calibration side, removed from that repeat's calibration units for every predictor (amendments.selection.declared_change_calibration_side)",
+    "internal-freeze Study-5 revision made 2026-11-03 before any Study-5 or nebDFT2k barrier inspection, informed only by outcome-free structural counts (frozen rules gave development 0 and P 2 systems): (1) TM/Hubbard-U systems enter development, P and Q, departing from parent study_5_contract.gate_0 'transition-metal-free'; the target is the LiTraj-protocol barrier; TM is a reported stratum and a density-ratio covariate; Studies 1-4 unchanged; (2) the P and development unit hop is h*_3 or the nearest-bottleneck nebDFT2k hop on the lowest-E*_3 nebDFT2k material (amendments.prospective.populations.calibration_side_unit_rule); Q unchanged; hop-role invariance assumption stated; (3) spanning systems are development units"
   ],
   "blocker_classes": {
     "local_engineering": "must all be resolved with reviewer evidence before the engineering checkpoint commit",

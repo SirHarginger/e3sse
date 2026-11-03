@@ -50,6 +50,10 @@ def _config(parent: dict, *, resolved: bool = True) -> dict:
             item["blocking"] = False
             item.setdefault("resolution", {"status": "resolved", "rule": "synthetic test",
                                            "evidence": "test fixture"})
+    else:  # an unresolved server-evidence item keeps the protocol unfrozen
+        for item in config["open_items"]:
+            if item["id"] == "bvse_reproduction":
+                item["blocking"] = True
     return config
 
 
@@ -68,11 +72,14 @@ def test_checked_in_config_is_internal_freeze_and_blocked_until_reviews():
     assert governance["governance_mode"] == "internal_version_controlled_freeze"
     assert governance["external_registration_required"] is False
     assert governance["preregistration_claimed"] is False
-    # Engineering checkpoint rule: no blocking local item; the freeze still needs server evidence.
+    # Engineering checkpoint rule: no blocking local item.  Server-evidence items are
+    # resolved only by run evidence: preflight requires the named checks to pass.
     assert local_engineering_blockers(config) == []
-    assert {"rate_limiting_hop_algorithm", "bvse_reproduction", "descriptor_availability",
-            "path_representation_mapping", "development_manifest"} <= set(
-        internal_freeze_blockers(config))
+    items = {i["id"]: i for i in config["open_items"]}
+    for item_id in ("rate_limiting_hop_algorithm", "bvse_reproduction", "descriptor_availability",
+                    "path_representation_mapping", "development_manifest",
+                    "ions_bvse_version_pin", "prospective_gate1_rule"):
+        assert items[item_id]["resolution"]["verified_by_preflight_checks"]
     # Embedding evidence is pinned (path + SHA-256), so its probe items no longer block.
     pins = config["amendments"]["representation"]["embedding_capability_evidence"]["reports"]
     assert len(pins) == 6 and all(len(pin["sha256"]) == 64 for pin in pins.values())

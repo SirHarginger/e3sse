@@ -258,7 +258,12 @@ class RunContext:
         try:
             return load_inventory(self.checkpoint_map(), self.models)[model]
         except CheckpointInventoryError as exc:
-            raise StageBlocked(BLOCKED_MISSING_EVIDENCE, str(exc)) from exc
+            roots = " ".join(f"--search-root {root}" for root in
+                             self.config["runtime"].get("checkpoint_search_roots", []))
+            raise StageBlocked(BLOCKED_MISSING_EVIDENCE, (
+                f"{exc}; build it once from the SHA-verified checkpoints and pinned smoke "
+                f"reports: python scripts/inventory_model_checkpoints.py --config "
+                f"{self.freeze_config_path} --output {self.checkpoint_map()} {roots}")) from exc
 
     def child_environment(self, runtime: ModelRuntime | None, threads: int) -> dict[str, str]:
         env = runtime_environment(runtime, self.repository)
@@ -760,7 +765,8 @@ def collect_preflight(ctx: RunContext, *, rehash_datasets: bool) -> list[checks.
         freeze_bound = freeze_is_bound(ctx)
     code = {name: file_sha256(ctx.repository / name) for name in
             ("scripts/audit_ml_neb_runtime.py", "src/e3sse/barriers/ml_neb.py",
-             "src/e3sse/screening/prospective_contract.py")}
+             "src/e3sse/screening/prospective_contract.py",
+             "src/e3sse/softening/study1_inference.py")}
     from e3sse.barriers.ml_neb import settings_from_protocol
 
     required = sorted({workload for stage in ctx.graph.stages.values()
@@ -791,14 +797,26 @@ def collect_preflight(ctx: RunContext, *, rehash_datasets: bool) -> list[checks.
             expected_code_sha256=code,
             expected_settings_sha256=settings_from_protocol(ctx.active_protocol).settings_sha256),
         *checks.check_resource_profiles(ctx.profiles(ambiguous), expanded, ambiguous=ambiguous),
-        *checks.check_protocol_open_items(ctx.active_protocol),
+        *[checks.check_run_stage_evidence(name, ctx.stage_outputs(name))
+          for name in PRE_FREEZE_EVIDENCE_STAGES],
+        checks.check_development_manifest_pin(ctx.active_protocol,
+                                              ctx.stage_outputs("development_population")),
+        checks.check_bvse_pin(ctx.stage_outputs("bvse_reproduction")),
         checks.check_outcome_runners_implemented(
             {name: stage.implementation_status for name, stage in ctx.graph.stages.items()
              if stage.outcome_access},
             required=bool(ctx.config.get("freeze", {}).get("require_outcome_runners_implemented",
                                                            True))),
     ]
+    # Last: evidence-verified open-item resolutions read the checks above.
+    result.extend(checks.check_protocol_open_items(ctx.active_protocol, result))
     return result
+
+
+# Pre-freeze, outcome-free stages whose completion in this run is evidence for the
+# protocol's server-evidence open items (verified_by_preflight_checks).
+PRE_FREEZE_EVIDENCE_STAGES = ("descriptor_availability", "development_population",
+                              "bvse_reproduction", "development_ml_neb", "path_representation")
 
 
 def _population_audit(ctx: RunContext) -> Path:

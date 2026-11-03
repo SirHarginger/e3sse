@@ -5,7 +5,7 @@ classifier (``selection.density_ratio``, IRLS, deterministic, frozen l2 / max_it
 tolerance, standardized on the fitting sample, no clipping) is fitted only on the
 held-out weight-fit slices converged under the selected model: P-slice systems
 (never calibration units) against Q-slice systems (never selected).  Its features
-are the label-free descriptor set.  Weights are then computed for the calibration
+are the label-free descriptor set plus E*_3 and the TM/Hubbard-U indicator.  Weights are then computed for the calibration
 units (deployment calibration) and the selectable pool units (discovery).  A unit
 with a missing feature gets no weight and cannot enter weighted selection (fail
 closed, counted).  Diagnostics: out-of-sample domain AUC on calibration vs pool
@@ -21,14 +21,28 @@ from typing import Any
 from e3sse.production.runners.context import MissingEvidence, RunnerContext
 
 
+def density_features(row) -> list[float] | None:
+    """Label-free descriptors + E*_3 + TM/Hubbard-U indicator (Study-5 revision
+    2026-11-03).  The unit-hop bottleneck gap is never a feature: every pool unit has
+    gap 0, so it would zero the weight of every proxy calibration unit."""
+
+    vector = (row or {}).get("vector")
+    critical = (row or {}).get("critical_bvse_barrier_eV")
+    tm = (row or {}).get("tm_hubbard_u")
+    if vector is None or any(v is None for v in vector) or critical is None \
+            or not isinstance(tm, bool):
+        return None
+    return [*vector, float(critical), float(tm)]
+
+
 def _complete(descriptors, keys):
     rows, kept, missing = [], [], []
     for key in keys:
-        vector = (descriptors.get(key) or {}).get("vector")
-        if vector is None or any(v is None for v in vector):
+        features = density_features(descriptors.get(key))
+        if features is None:
             missing.append(key)
         else:
-            rows.append(vector)
+            rows.append(features)
             kept.append(key)
     return rows, kept, missing
 

@@ -66,14 +66,47 @@ def test_population_classes_and_unique_chemical_systems():
     assert counts["nebDFT2k_materials_rate_limiting_hop_in_nebDFT2k"] == 4
     assert counts["unique_chemical_systems_among_them"] == 4
     populations = report["populations"]
-    assert populations["development"]["structural_upper_bound"]["systems"] == ["Li-S"]
-    # Li-O-P: the chosen structure (mp-2) has no nebDFT2k hop -> ineligible, never re-chosen.
-    assert populations["P"]["rate_limiting_hop_not_in_nebDFT2k"]["systems"] == ["Li-O-P"]
-    assert report["excluded_from_P"]["spanning_published_splits"]["systems"] == ["Cl-Li"]
-    assert populations["P"]["tm_hubbard_u_excluded"]["systems"] == ["Fe-Li-O"]
+    # Study-5 revision: test-only and spanning systems are development units.
+    assert populations["development"]["structural_upper_bound"]["systems"] == ["Cl-Li", "Li-S"]
+    # Li-O-P: the calibration-side structure is chosen among nebDFT2k materials (mp-1),
+    # not the lower-E*_3 non-nebDFT2k mp-2; its h*_3 is the nebDFT2k hop.
+    assert populations["P"]["rate_limiting_exact"]["systems"] == ["Fe-Li-O", "Li-O-P"]
+    # TM/Hubbard-U is a stratum, not an exclusion.
+    assert populations["P"]["tm_hubbard_u_stratum"]["systems"] == ["Fe-Li-O"]
     assert populations["Q"]["structural_upper_bound"]["systems"] == ["Br-Li"]
+    units = {u["chemical_system"]: u for u in report["units"]}
+    assert units["Li-O-P"]["material_id"] == "mp-1" and units["Fe-Li-O"]["tm_hubbard_u"] is True
+    assert units["Br-Li"]["unit_hop_role"] == "rate_limiting_exact"
     assert report["outcome_columns_read"] is False and report["dimension"] == 3
-    assert "nebDFT2k element criteria" in report["gate0_not_applied"]
+    assert "element and hop-length envelope" in report["gate0_not_applied"]
+
+
+def test_calibration_side_proxy_hop_is_nearest_the_bottleneck():
+    # h*_3 of mp-1 is the 0_0_1 hop (0.36 eV); nebDFT2k holds only 1_0_0 (0.30) and the
+    # reverse direction of 0_1_0 (0.30): the tie on |gap| goes to the smaller canonical key.
+    bvse = _rows("mp-1", 0.3, "Li-O-P")
+    dft = [{"material_id": "mp-1", "edge_id": "mp-1_0_0_1_0_0", "chemsys": "Li-O-P"},
+           {"material_id": "mp-1", "edge_id": "mp-1_0_0_0_1_0", "chemsys": "Li-O-P"}]
+    report = _populations(bvse, [], dft, [{"chemical_system_id": "Li-O-P",
+                                           "published_split": "train"}])
+    (unit,) = report["units"]
+    assert unit["unit_hop_role"] == "bottleneck_proxy"
+    assert unit["unit_edge_id"] == "mp-1_0_0_0_1_0"  # canonical key (0, 0, (0,1,0)) < (1,0,0)
+    assert unit["rate_limiting_edge_ids"] == ["mp-1_0_0_0_0_1"]
+    assert abs(unit["bottleneck_gap_eV"] - (0.3 - 0.36)) < 1e-12
+    assert report["counts"]["P_bottleneck_proxy_systems"] == 1
+
+
+def test_development_never_uses_a_validation_material():
+    bvse = _rows("mp-1", 0.2, "Li-O-P") + _rows("mp-2", 0.3, "Li-O-P")
+    dft = [{"material_id": m, "edge_id": f"{m}_0_0_0_0_1", "chemsys": "Li-O-P"}
+           for m in ("mp-1", "mp-2")]
+    membership = [{"chemical_system_id": "Li-O-P", "material_id": "mp-1", "published_split": "val"},
+                  {"chemical_system_id": "Li-O-P", "material_id": "mp-2",
+                   "published_split": "test"}]
+    report = _populations(bvse, [], dft, membership)
+    (unit,) = report["units"]
+    assert unit["side"] == "development" and unit["material_id"] == "mp-2"
 
 
 def _populations(bvse, bvel, dft, membership):

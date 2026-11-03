@@ -263,7 +263,7 @@ def check_gate1_structural_populations(path: Path, linkage_path: Path) -> Prefli
     if not isinstance(development, int) or development <= SUPPORT_K:
         return _failed(
             "gate1_structural_populations", "freeze",
-            "Study 5 is structurally infeasible under the frozen primary-population rules: "
+            "Study 5 is structurally infeasible under the frozen population rules: "
             f"development upper bound is {development!r}, but k={SUPPORT_K} support needs at "
             f"least {SUPPORT_K + 1} systems; outcome-free identifiers/covariates only",
             path=str(path), development_structural_upper_bound_systems=development,
@@ -450,16 +450,76 @@ def check_resource_profiles(profiles: Mapping[tuple[str, str], Any],
 # ------------------------------------------------------------------- protocol
 
 
-def check_protocol_open_items(active_protocol: Mapping[str, Any]) -> list[PreflightCheck]:
+def check_protocol_open_items(active_protocol: Mapping[str, Any],
+                              evidence: Iterable[PreflightCheck] = ()) -> list[PreflightCheck]:
+    """Blocking items block the freeze.  A resolved item whose resolution names
+    ``verified_by_preflight_checks`` is satisfied only when every named check passed in
+    this preflight (server evidence of this run), never by the protocol text alone."""
+
+    statuses = {check.check_id: check.status for check in evidence}
     checks = []
     for item in active_protocol["open_items"]:
         if item["blocking"]:
             checks.append(_missing(f"protocol_open_item:{item['id']}", "freeze",
                                    item["required_resolution"],
                                    blocker_class=item.get("blocker_class")))
+            continue
+        required = (item.get("resolution") or {}).get("verified_by_preflight_checks") or []
+        unmet = sorted(name for name in required if statuses.get(name) != "passed")
+        if unmet:
+            checks.append(_missing(f"protocol_open_item:{item['id']}", "freeze",
+                                   "resolved by run evidence, which has not passed: "
+                                   f"{unmet}", required_checks=list(required)))
     if not checks:
-        checks.append(_passed("protocol_open_items", "freeze", "no blocking open item"))
+        checks.append(_passed("protocol_open_items", "freeze",
+                              "no blocking open item; every evidence-verified resolution passed"))
     return checks
+
+
+def check_run_stage_evidence(stage: str, outputs: Mapping[str, Any] | None) -> PreflightCheck:
+    """A pre-freeze stage of this run has a verified completion record."""
+
+    check_id = f"run_evidence:{stage}"
+    if outputs is None:
+        return _missing(check_id, "freeze", f"{stage} has no verified completion in this run")
+    return _passed(check_id, "freeze", f"{stage} completed in this run",
+                   outputs={name: record.get("sha256") for name, record in sorted(outputs.items())})
+
+
+def check_development_manifest_pin(active_protocol: Mapping[str, Any],
+                                   outputs: Mapping[str, Any] | None) -> PreflightCheck:
+    pinned = active_protocol["amendments"]["prospective"].get("development_manifest_sha256")
+    if outputs is None or "development_manifest" not in outputs:
+        return _missing("development_manifest_pin", "freeze", "development manifest not built")
+    manifest = json.loads(Path(outputs["development_manifest"]["path"]).read_text(encoding="utf-8"))
+    if manifest.get("manifest_sha256") != pinned:
+        return _failed("development_manifest_pin", "freeze", "the development manifest differs "
+                       "from amendments.prospective.development_manifest_sha256",
+                       pinned=pinned, built=manifest.get("manifest_sha256"))
+    return _passed("development_manifest_pin", "freeze", "development manifest matches its pin",
+                   manifest_sha256=pinned, development_units=len(manifest.get("hop_ids", [])))
+
+
+# Pre-declared (2026-11-03, before any BVSE evidence): the ions pin is confirmed when
+# more checked calibration-side paths reproduce nebDFT2k _init.xyz than not.  Units that
+# do not reproduce are excluded one by one by the frozen bvse_reproduction rule.
+BVSE_PIN_MIN_REPRODUCTION_RATE = 0.5
+
+
+def check_bvse_pin(outputs: Mapping[str, Any] | None) -> PreflightCheck:
+    if outputs is None or "bvse_reproduction_report" not in outputs:
+        return _missing("bvse_ions_pin_confirmed", "freeze", "BVSE reproduction report absent")
+    report = json.loads(Path(outputs["bvse_reproduction_report"]["path"]).read_text(
+        encoding="utf-8"))
+    rate = report.get("calibration_reproduction_rate")
+    evidence = {"calibration_reproduction_rate": rate, "counts": report.get("counts"),
+                "runtime_versions": report.get("runtime_versions"),
+                "minimum_rate": BVSE_PIN_MIN_REPRODUCTION_RATE}
+    if not isinstance(rate, float) or rate <= BVSE_PIN_MIN_REPRODUCTION_RATE:
+        return _failed("bvse_ions_pin_confirmed", "freeze", "the pinned ions release does not "
+                       "reproduce most nebDFT2k _init.xyz paths; the pin is refuted", **evidence)
+    return _passed("bvse_ions_pin_confirmed", "freeze", "ions pin reproduces nebDFT2k paths",
+                   **evidence)
 
 
 def check_outcome_runners_implemented(statuses: Mapping[str, str], *,

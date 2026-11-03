@@ -6,25 +6,25 @@ Inputs are identifiers and the BVSE covariate only: nebBVSE122k ``material_id``,
 membership (published split per chemical system); and the frozen TM/Hubbard-U
 assignment.  No DFT barrier, energy or force is an input.
 
-Rules (``amendments.prospective.populations``):
+Rules (``amendments.prospective.populations``, Study-5 revision of 2026-11-03,
+count-informed and outcome-free):
 
 * chemical systems are normalized with ``protocol.partitions.normalize_chemical_system``;
-* the structure universe of a system is every material with that system in
-  nebBVSE122k union BVEL13k;
-* structure rule: the structure with the lowest critical BVSE barrier E*_3 among
-  those with a 3-D percolating network, ties by ascending ``material_id``; a material
-  with an ambiguous edge table is never analysed;
-* a calibration-side system is structurally eligible only if the chosen structure's
-  rate-limiting hop h*_3 is a nebDFT2k hop (else ineligible and counted, never
-  re-chosen);
-* development candidates: published-test systems with nebDFT2k hops, spanning
-  systems excluded.  P candidates: published-train systems with nebDFT2k hops
-  (``calibration_set``); validation systems are the sealed reserve and spanning
-  systems are excluded pending an owner decision, both counted.  Q candidates:
-  BVEL13k systems outside the partition universe;
-* Gate 0 here applies the frozen TM/Hubbard-U rule only.  The "nebDFT2k element
-  criteria" part of Gate 0 has no executable definition yet and is reported as not
-  applied, so these counts are structural upper bounds, not the final populations.
+* Q (pool): BVEL13k systems outside the partition universe; the structure rule picks,
+  among every material with that system in nebBVSE122k union BVEL13k, the structure
+  with the lowest critical BVSE barrier E*_3 among those with a 3-D percolating
+  network (ties by ascending ``material_id``); the unit hop is its h*_3;
+* P (calibration side): published-train-only systems with nebDFT2k hops;
+  development: systems with published-test contact (test-only or spanning), built
+  only on non-validation materials; validation-only systems are the sealed reserve;
+* P/development structure: the lowest-E*_3 3-D-percolating nebDFT2k material of the
+  system (ties by ``material_id``); unit hop: its h*_3 if a nebDFT2k hop
+  (``rate_limiting_exact``), else its nebDFT2k hop nearest the bottleneck
+  (``bottleneck_proxy``, see ``unit_hop``); a material with an ambiguous edge table
+  is never analysed;
+* TM/Hubbard-U systems are a reported stratum (``tm_hubbard_u``) on every side, not
+  an exclusion; Gate 0 is the nebDFT2k element/hop-length envelope only, applied
+  later from descriptors, so these counts are structural upper bounds.
 
 ML-NEB convergence and BVSE-path reproduction filters come later and are not
 applied here.
@@ -39,11 +39,13 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from e3sse.protocol.partitions import normalize_chemical_system
-from e3sse.screening.rate_limiting_hop import parse_edge_id, rate_limiting_hop
+from e3sse.screening.rate_limiting_hop import parse_edge_id, physical_hops, rate_limiting_hop
 
 POPULATION_AUDIT_SCHEMA = "e3sse.gate1-structural-population-audit"
 DIMENSION = 3
 BVSE_FIELD = "bvse_migration_barrier_eV"
+RATE_LIMITING_EXACT = "rate_limiting_exact"
+BOTTLENECK_PROXY = "bottleneck_proxy"
 
 
 def _digest(values: Iterable[str]) -> str:
@@ -106,6 +108,33 @@ def choose_structure(materials: Iterable[str], rows_by_material: Mapping[str, li
     return {"status": "chosen", "material_id": material, "critical_barrier_eV": critical,
             "rate_limiting_edge_ids": result["rate_limiting_edge_ids"],
             "tie": len(result["tied_hops"]) > 1, "structure_statuses": dict(statuses)}
+
+
+def unit_hop(chosen: Mapping[str, Any], material_rows: list[dict[str, Any]],
+             dft_edges: set[str]) -> dict[str, Any] | None:
+    """Calibration-side unit hop of a chosen nebDFT2k structure (frozen Study-5 rule).
+
+    h*_3 when it is a nebDFT2k hop (``rate_limiting_exact``); otherwise the structure's
+    nebDFT2k hop with the smallest |em_bvse - E*_3|, hops above and below E*_3 both
+    allowed, ties by ascending canonical hop key (``bottleneck_proxy``).  Covariate
+    only: BVSE barriers and identifiers.  The returned edge IDs are the nebDFT2k
+    directions of the one physical hop.
+    """
+
+    exact = sorted(e for e in chosen["rate_limiting_edge_ids"] if e in dft_edges)
+    if exact:
+        return {"unit_edge_ids": exact, "unit_hop_role": RATE_LIMITING_EXACT,
+                "unit_bvse_barrier_eV": chosen["critical_barrier_eV"]}
+    hops, failure = physical_hops(material_rows)
+    if failure is not None:
+        return None
+    critical = chosen["critical_barrier_eV"]
+    labelled = [h for h in hops if any(e in dft_edges for e in h["edge_ids"])]
+    if not labelled:
+        return None
+    best = min(labelled, key=lambda h: (abs(h["em"] - critical), h["key"]))
+    return {"unit_edge_ids": sorted(e for e in best["edge_ids"] if e in dft_edges),
+            "unit_hop_role": BOTTLENECK_PROXY, "unit_bvse_barrier_eV": best["em"]}
 
 
 def material_systems(*tables: Iterable[Mapping[str, str]]) -> tuple[dict[str, str], dict[str, Any]]:
@@ -187,7 +216,7 @@ def structural_populations(
         raise ValueError(f"{len(outside)} nebDFT2k chemical system(s) lie outside the partition "
                          f"universe, e.g. {outside[0]}")
 
-    def tm_excluded(system: str) -> bool:
+    def tm_hubbard_u(system: str) -> bool:
         if system in primary_assignment:
             return primary_assignment[system] != "primary"
         return bool(set(system.split("-")) & excluded)
@@ -200,6 +229,18 @@ def structural_populations(
         return {"test": "published_test", "train": "published_train",
                 "val": "published_validation"}[next(iter(splits[system]))]
 
+    # Material-level published split (nebDFT2k hop records of the frozen membership):
+    # a development unit is never built on a published-validation material.
+    material_splits: dict[str, set[str]] = defaultdict(set)
+    for record in membership_records:
+        if (record.get("material_id") is not None
+                and record.get("record_kind", "nebdft2k_hop") == "nebdft2k_hop"):
+            material_splits[str(record["material_id"])].add(record["published_split"])
+    dft_by_system: dict[str, list[str]] = defaultdict(list)
+    for material in dft_materials:
+        if material in material_system:
+            dft_by_system[material_system[material]].append(material)
+
     sides: dict[str, dict[str, list[str]]] = {
         name: defaultdict(list) for name in ("development", "P", "Q")}
     not_a_candidate: list[str] = []
@@ -209,15 +250,14 @@ def structural_populations(
     for system in sorted(dft_systems | bvel_systems):
         in_dft = system in dft_systems
         membership = classify(system)
-        if in_dft and membership == "published_test":
+        if in_dft and membership == "published_train":
+            side = "P"  # calibration_set: published-train-only systems
+        elif in_dft and membership in ("published_test", "spanning_published_splits"):
+            # Development: every system with published-test contact (its outcomes already
+            # enter Study 2a / G1, so it can never be a calibration unit).
             side = "development"
-        elif in_dft and membership == "published_train":
-            side = "P"  # calibration_set: published-train primary-population hops
         elif in_dft:
-            # Validation systems: sealed reserve, excluded from Study 5 (parent rule).
-            # Spanning systems: their published-test hops enter the Study-2a evaluation
-            # that informs the deployed predictor; excluded pending the owner decision
-            # (open item p_population_split_membership).
+            # Validation-only systems: sealed reserve, excluded from Study 5 (parent rule).
             excluded_from_p[membership].append(system)
             continue
         elif membership == "outside_partition_universe":
@@ -229,28 +269,48 @@ def structural_populations(
             continue
         record = sides[side]
         record["candidate_systems"].append(system)
-        if tm_excluded(system):
-            record["tm_hubbard_u_excluded"].append(system)
-            continue
-        chosen = choose_structure(universe.get(system, ()), rows_by_material, ambiguous)
-        if chosen["status"] != "chosen":
-            record["no_percolating_structure"].append(system)
-            continue
-        ties += chosen["tie"]
-        # Pool units have no nebDFT2k requirement; calibration-side h*_3 must be a nebDFT2k hop.
-        in_dft_edges = sorted(e for e in chosen["rate_limiting_edge_ids"] if e in dft_edges)
-        if side == "Q" or in_dft_edges:
-            record["structural_upper_bound"].append(system)
-            # The unit's edge: the nebDFT2k direction of h*_3 on the calibration side,
-            # else the first stored direction (both directions are one physical hop).
-            units.append({"chemical_system": system, "side": side,
-                          "material_id": chosen["material_id"],
-                          "unit_edge_id": (in_dft_edges or sorted(chosen["rate_limiting_edge_ids"]))[0],
-                          "rate_limiting_edge_ids": sorted(chosen["rate_limiting_edge_ids"]),
-                          "critical_bvse_barrier_eV": chosen["critical_barrier_eV"],
-                          "structure_rule_tie": chosen["tie"]})
+        # TM/Hubbard-U: a reported stratum and density-ratio covariate, never an
+        # exclusion in Study 5 (counted below among structurally eligible units).
+        tm = tm_hubbard_u(system)
+        if side == "Q":
+            chosen = choose_structure(universe.get(system, ()), rows_by_material, ambiguous)
+            if chosen["status"] != "chosen":
+                record["no_percolating_structure"].append(system)
+                continue
+            ties += chosen["tie"]
+            hop = {"unit_edge_ids": sorted(chosen["rate_limiting_edge_ids"]),
+                   "unit_hop_role": RATE_LIMITING_EXACT,
+                   "unit_bvse_barrier_eV": chosen["critical_barrier_eV"]}
         else:
-            record["rate_limiting_hop_not_in_nebDFT2k"].append(system)
+            materials = [m for m in dft_by_system[system] if side == "P"
+                         or "val" not in material_splits.get(m, set())]
+            chosen = choose_structure(materials, rows_by_material, ambiguous)
+            if chosen["status"] != "chosen":
+                record["no_percolating_nebDFT2k_structure"].append(system)
+                continue
+            ties += chosen["tie"]
+            hop = unit_hop(chosen, rows_by_material[chosen["material_id"]], dft_edges)
+            if hop is None:  # cannot happen for a nebDFT2k material; fail visibly if it does
+                record["no_nebDFT2k_hop_in_structure"].append(system)
+                continue
+        record["structural_upper_bound"].append(system)
+        record[hop["unit_hop_role"]].append(system)
+        if tm:
+            record["tm_hubbard_u_stratum"].append(system)
+        units.append({"chemical_system": system, "side": side,
+                      "material_id": chosen["material_id"],
+                      # the nebDFT2k direction of the unit hop on the calibration side,
+                      # else the first stored direction (both are one physical hop)
+                      "unit_edge_id": hop["unit_edge_ids"][0],
+                      "unit_edge_ids": hop["unit_edge_ids"],
+                      "unit_hop_role": hop["unit_hop_role"],
+                      "unit_bvse_barrier_eV": hop["unit_bvse_barrier_eV"],
+                      "rate_limiting_edge_ids": sorted(chosen["rate_limiting_edge_ids"]),
+                      "critical_bvse_barrier_eV": chosen["critical_barrier_eV"],
+                      "bottleneck_gap_eV": hop["unit_bvse_barrier_eV"]
+                      - chosen["critical_barrier_eV"],
+                      "tm_hubbard_u": tm,
+                      "structure_rule_tie": chosen["tie"]})
 
     def summary(record: Mapping[str, list[str]]) -> dict[str, Any]:
         return {key: {"count": len(values), "sha256": _digest(values), "systems": sorted(values)}
@@ -265,6 +325,9 @@ def structural_populations(
             "unique_chemical_systems_among_them": len(hop_in_dft_systems),
             **{f"{side}_structural_upper_bound_systems": len(sides[side]["structural_upper_bound"])
                for side in ("development", "P", "Q")},
+            **{f"{side}_{role}_systems": len(sides[side][role])
+               for side in ("development", "P", "Q") for role in
+               (RATE_LIMITING_EXACT, BOTTLENECK_PROXY, "tm_hubbard_u_stratum")},
             "structure_rule_ties": ties,
         },
         "calibration_side_materials": {"count": len(hop_in_dft), "sha256": _digest(hop_in_dft),
@@ -279,16 +342,16 @@ def structural_populations(
                             "reason": "BVEL13k-only system inside the partition universe"},
         "material_quality": {key: {"count": len(values), "materials": values}
                              for key, values in rejected.items()},
-        "gate0_applied": ("TM/Hubbard-U rule (frozen assignment for partition-universe systems; "
-                          "frozen excluded_elements for the others)"),
-        "gate0_not_applied": "nebDFT2k element criteria (no executable definition yet)",
+        "tm_hubbard_u": ("reported stratum (frozen assignment for partition-universe systems; "
+                         "frozen excluded_elements for the others), not an exclusion"),
+        "gate0_not_applied": ("nebDFT2k element and hop-length envelope (applied by the "
+                              "development_population stage from descriptors)"),
         "filters_not_applied": ["ML-NEB convergence", "BVSE path reproduction (P only)",
                                 "weight-fit hold-out slices"],
         "interpretation_flags": [
-            ("P counts published-train systems only (calibration_set); published-validation "
-             "systems are excluded by the parent published_validation_split_role rule, and "
-             "systems spanning published splits are excluded pending open item "
-             "p_population_split_membership (the literal eligible_P text would include both)"),
+            ("P counts published-train-only systems (calibration_set); development counts "
+             "test-only and spanning systems; published-validation systems are the sealed "
+             "reserve (parent published_validation_split_role rule)"),
             "not a population manifest: counts are upper bounds (see filters_not_applied)"],
         "interpretation": "structural upper bounds before the remaining frozen filters; never "
                           "chosen from or compared with any outcome",

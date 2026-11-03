@@ -202,15 +202,42 @@ def test_ml_neb_runtime_audits_require_one_ase_version(tmp_path):
 
 
 def test_protocol_open_items_block_the_freeze_until_resolved():
+    # Evidence-verified resolutions block until this run's named checks pass.
     checks = preflight.check_protocol_open_items(ACTIVE)
     ids = {c.check_id for c in checks}
     assert "protocol_open_item:bvse_reproduction" in ids
     assert "protocol_open_item:embedding_probe_server_run" not in ids
     assert all(c.blocks == "freeze" and c.blocking for c in checks)
-    resolved = copy.deepcopy(ACTIVE)
-    for item in resolved["open_items"]:
-        item["blocking"] = False
-    assert [c.status for c in preflight.check_protocol_open_items(resolved)] == ["passed"]
+    required = {name for item in ACTIVE["open_items"]
+                for name in (item.get("resolution") or {}).get("verified_by_preflight_checks", [])}
+    evidence = [preflight.PreflightCheck(name, "passed", "freeze", "ok") for name in required]
+    assert [c.status for c in preflight.check_protocol_open_items(ACTIVE, evidence)] == ["passed"]
+    failed = [preflight.PreflightCheck(n, "failed" if n == "bvse_ions_pin_confirmed" else "passed",
+                                       "freeze", "x") for n in required]
+    ids = {c.check_id for c in preflight.check_protocol_open_items(ACTIVE, failed)}
+    assert ids == {"protocol_open_item:bvse_reproduction",
+                   "protocol_open_item:ions_bvse_version_pin"}
+    blocking = copy.deepcopy(ACTIVE)
+    blocking["open_items"][0]["blocking"] = True
+    assert any(c.status == "missing_evidence"
+               for c in preflight.check_protocol_open_items(blocking, evidence))
+
+
+def test_development_manifest_pin_and_bvse_pin_checks(tmp_path):
+    manifest = tmp_path / "development_manifest.json"
+    pinned = ACTIVE["amendments"]["prospective"]["development_manifest_sha256"]
+    manifest.write_text(json.dumps({"manifest_sha256": pinned, "hop_ids": ["a"]}))
+    outputs = {"development_manifest": {"path": str(manifest), "sha256": "x"}}
+    assert preflight.check_development_manifest_pin(ACTIVE, outputs).status == "passed"
+    manifest.write_text(json.dumps({"manifest_sha256": "0" * 64}))
+    assert preflight.check_development_manifest_pin(ACTIVE, outputs).status == "failed"
+    assert preflight.check_development_manifest_pin(ACTIVE, None).status == "missing_evidence"
+    report = tmp_path / "bvse.json"
+    bvse = {"bvse_reproduction_report": {"path": str(report), "sha256": "x"}}
+    for rate, status in ((0.9, "passed"), (0.5, "failed"), (None, "failed")):
+        report.write_text(json.dumps({"calibration_reproduction_rate": rate}))
+        assert preflight.check_bvse_pin(bvse).status == status
+    assert preflight.check_run_stage_evidence("bvse_reproduction", None).status == "missing_evidence"
 
 
 def test_scope_keeps_transport_deferred():

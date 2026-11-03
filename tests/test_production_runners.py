@@ -122,7 +122,9 @@ def _vector(family="oxide", hop=2.5):
 def _unit(side, system, material):
     edge = f"{material}_0_1_0_0_0"
     return {"side": side, "chemical_system": system, "unit_edge_id": edge, "material_id": material,
-            "rate_limiting_edge_ids": [edge]}
+            "rate_limiting_edge_ids": [edge], "unit_edge_ids": [edge],
+            "unit_hop_role": "rate_limiting_exact", "critical_bvse_barrier_eV": 0.4,
+            "tm_hubbard_u": False}
 
 
 def test_population_roles_gate0_and_development_manifest_hash(monkeypatch):
@@ -484,15 +486,27 @@ def test_population_units_must_be_one_hop_and_included_in_the_right_split():
     unit = _unit("P", "Li-O", "mp-1")
     hop = {"record_kind": "nebdft2k_hop", "hop_id": unit["unit_edge_id"],
            "eligibility_status": "included", "published_split": "train"}
-    population.validate_units([{**unit, "rate_limiting_edge_ids": [
-        "mp-1_0_1_0_0_0", "mp-1_1_0_0_0_0"]}], [hop])  # both directions of one hop
+    both = ["mp-1_0_1_0_0_0", "mp-1_1_0_0_0_0"]  # both directions of one hop
+    population.validate_units([{**unit, "rate_limiting_edge_ids": both, "unit_edge_ids": both}],
+                              [hop, {**hop, "hop_id": both[1]}])
+    two = ["mp-1_0_1_0_0_0", "mp-1_0_2_0_0_0"]
     with pytest.raises(RunnerValidationError, match="more than one physical hop"):
-        population.validate_units([{**unit, "rate_limiting_edge_ids": [
-            "mp-1_0_1_0_0_0", "mp-1_0_2_0_0_0"]}], [hop])
-    with pytest.raises(RunnerValidationError, match="published-train"):
+        population.validate_units([{**unit, "rate_limiting_edge_ids": two, "unit_edge_ids": two}],
+                                  [hop])
+    with pytest.raises(RunnerValidationError, match="exact unit is not its h"):
+        population.validate_units([{**unit, "rate_limiting_edge_ids": ["mp-1_0_2_0_0_0"]}], [hop])
+    proxy = {**unit, "rate_limiting_edge_ids": ["mp-1_0_2_0_0_0"],
+             "unit_hop_role": "bottleneck_proxy"}
+    population.validate_units([proxy], [hop])
+    with pytest.raises(RunnerValidationError, match="published split"):
         population.validate_units([unit], [{**hop, "published_split": "val"}])
-    with pytest.raises(RunnerValidationError, match="published-test"):
-        population.validate_units([{**unit, "side": "development"}], [hop])
+    # development: test or train hops (spanning systems), never validation
+    population.validate_units([{**unit, "side": "development"}], [hop])
+    population.validate_units([{**unit, "side": "development"}],
+                              [{**hop, "published_split": "test"}])
+    with pytest.raises(RunnerValidationError, match="published split"):
+        population.validate_units([{**unit, "side": "development"}],
+                                  [{**hop, "published_split": "val"}])
 
 
 def test_upstream_path_verifies_prepare_model_and_stage_manifests(tmp_path):
@@ -628,3 +642,15 @@ def test_reference_unit_missing_covariates_is_excluded_and_never_shapes_the_enve
     assert roles["Q:Br-Li-O"] == "excluded_gate0"  # Br only came from the incomplete unit
     assert built["gate0"]["element_support"] == ["Li", "O", "P", "S"]
     assert built["gate0"]["reference_units"] == 2
+
+
+def test_density_features_add_critical_barrier_and_tm_indicator_never_the_gap():
+    from e3sse.production.runners.density import density_features
+
+    row = {**_unit("P", "Fe-Li-O", "mp-1"), "vector": _vector(), "tm_hubbard_u": True,
+           "bottleneck_gap_eV": -0.1}
+    features = density_features(row)
+    assert features == [*_vector(), 0.4, 1.0]  # gap is not a feature
+    assert density_features({**row, "critical_bvse_barrier_eV": None}) is None  # fail closed
+    assert density_features({**row, "tm_hubbard_u": None}) is None
+    assert density_features({**row, "vector": None}) is None
