@@ -229,6 +229,126 @@ def test_bvse_reproduction_tolerance():
     assert compare_paths(path, path * 2, settings)["reason"] == "image_count_differs"
 
 
+def _bvse_recipe_amendments():
+    protocol = json.loads((REPOSITORY / "configs" /
+                           "reliability_gated_internal_freeze_protocol.json").read_text())
+    return protocol["amendments"]
+
+
+def test_bvse_recipe_requires_decoration_driver_and_image_count():
+    from e3sse.production.runners import bvse_paths
+
+    for field, bad in (("decoration", None), ("decoration", "guess"), ("driver", None),
+                       ("driver", {"name": "SaddleFinder.run"}),
+                       ("driver", {"name": "FIRE", "relax_endpoints": False}),
+                       ("image_count", None),
+                       ("image_count", {"short_hop_images": 4, "long_hop_images": 7,
+                                        "long_hop_min_length_A": 4.5})):
+        amendments = _bvse_recipe_amendments()
+        frozen = amendments["prospective"]["ml_neb"]["bvse_recipe"]
+        if bad is None:
+            frozen.pop(field)
+        else:
+            frozen[field] = bad
+        with pytest.raises(RunnerValidationError):
+            bvse_paths.recipe(amendments)
+
+
+def test_bvse_image_count_follows_the_unwrapped_edge_length():
+    from e3sse.production.runners.bvse_paths import n_images
+
+    rule = {"short_hop_images": 5, "long_hop_images": 7, "long_hop_min_length_A": 4.5}
+    # archive extremes: longest 5-image hop 4.49406 A, shortest 7-image hop 4.50193 A
+    assert [n_images(x, rule) for x in (2.049, 4.49406, 4.5, 4.50193, 5.989, 7.5)] == \
+        [5, 5, 7, 7, 7, 7]
+
+
+def test_bvse_task_removes_the_perturbation_with_bvanalyzer_states(monkeypatch):
+    """The task decorates with BVAnalyzer, picks the image count from Edge.length and
+    lets SaddleFinder.run remove the perturbation without relaxing the endpoints."""
+
+    import types
+
+    from e3sse.production.runners import bvse_paths
+
+    calls = {}
+
+    class Edge:
+        def __init__(self, atoms, source, target, offset):
+            calls["oxi_states"] = atoms.get_array("oxi_states").tolist()
+            self.atoms, self.length = atoms, 4.6
+
+        def superedge(self, cutoff):
+            return self
+
+        def interpolate(self, n_images):
+            calls["n_images"] = n_images
+            return [self.atoms.copy() for _ in range(n_images)]
+
+    class NEB:
+        def get_forces(self):
+            return np.full((1, 3), 0.05)
+
+    class SaddleFinder:
+        def bvse_neb(self, images, **options):
+            calls["bvse_neb"] = options
+            for image in images:
+                image.info["perturbation"] = np.full((len(image), 3), 0.2)
+            neb = NEB()
+            neb.images = images
+            return neb
+
+        def run(self, neb, **options):  # like ions: the perturbation is gone afterwards
+            calls["run"] = options
+            for image in neb.images:
+                image.info["perturbation"] = 0.0 * image.info["perturbation"]
+
+        def get_barrier(self, images):
+            return 0.3
+
+    class BVAnalyzer:
+        def get_valences(self, structure):
+            return [1, -2]
+
+    modules = {
+        "ions": types.SimpleNamespace(Decorator=None),
+        "ions.geom": types.ModuleType("ions.geom"),
+        "ions.geom.edge": types.SimpleNamespace(Edge=Edge),
+        "ions.tools": types.SimpleNamespace(SaddleFinder=SaddleFinder),
+        "ions.utils": types.SimpleNamespace(collect_bvse_params=lambda atoms, s, q: atoms),
+        "pymatgen.analysis.bond_valence": types.SimpleNamespace(BVAnalyzer=BVAnalyzer),
+        "pymatgen.io.ase": types.SimpleNamespace(
+            AseAtomsAdaptor=types.SimpleNamespace(get_structure=lambda atoms: atoms)),
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    settings = bvse_paths.recipe(_bvse_recipe_amendments())
+    payload = {"unit_key": "k", "unit_id": "mp-1_0_1_0_0_0", "recipe": settings, "reference": None,
+               "edge": {"source": 0, "target": 1, "offset": [0, 0, 0]},
+               "structure": {"numbers": [3, 8], "positions": [[0, 0, 0], [1, 1, 1]],
+                             "cell": (np.eye(3) * 5).tolist(), "pbc": [True] * 3}}
+    result = bvse_paths.bvse_path_task(payload, None)
+    assert result["status"] == "generated" and len(result["images"]) == 7
+    assert calls["oxi_states"] == [1, -2] and calls["n_images"] == 7
+    assert calls["bvse_neb"] == {"k": 2.0, "default": True, "distort": True, "gm": False}
+    assert calls["run"] == {"steps": 100, "fmax": 0.1, "relax_endpoints": False, "logfile": None}
+    assert result["max_framework_perturbation_A"] == pytest.approx(0.2)  # applied maximum
+
+    def no_valences(self, structure):
+        raise ValueError("Valences cannot be assigned!")
+
+    monkeypatch.setattr(BVAnalyzer, "get_valences", no_valences)
+    failed = bvse_paths.bvse_path_task(payload, None)
+    assert failed["status"] == "decorator_failure" and "Valences" in failed["detail"]
+
+    def out_of_memory(self, structure):
+        raise MemoryError
+
+    monkeypatch.setattr(BVAnalyzer, "get_valences", out_of_memory)
+    with pytest.raises(MemoryError):  # infrastructure is never a unit failure
+        bvse_paths.bvse_path_task(payload, None)
+
+
 def test_pilot_mde_is_a_power_analysis():
     barriers = [0.3, 0.5, 0.7, 0.4] * 10
     clusters = [f"c{i // 2}" for i in range(len(barriers))]
@@ -470,8 +590,11 @@ def test_runner_constants_equal_the_structured_protocol_values():
         ml_neb["frozen_numeric_settings"]["reproducibility_subset"]["size_hops"]
     recipe = bvse_paths.recipe(amendments)
     assert recipe["bvse_neb_options"] == {"k": 2.0, "default": True, "distort": True, "gm": False}
-    assert (recipe["superedge_cutoff_A"], recipe["n_images"], recipe["fire_fmax"],
-            recipe["fire_steps"]) == (8.0, 5, 0.1, 100)
+    assert (recipe["decoration"], recipe["relax_endpoints"]) == ("pymatgen_bvanalyzer", False)
+    assert recipe["image_count"] == {"short_hop_images": 5, "long_hop_images": 7,
+                                     "long_hop_min_length_A": 4.5}
+    assert (recipe["superedge_cutoff_A"], recipe["fire_fmax"], recipe["fire_steps"]) == \
+        (8.0, 0.1, 100)
 
 
 def test_collapsed_embeddings_fail_the_degeneracy_check_without_infinities():

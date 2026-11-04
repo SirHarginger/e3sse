@@ -121,7 +121,7 @@ No stage is a missing runner.  Every runner is driven by `scripts/run_production
 
 ### Environments and checkpoints
 
-- BVSE runtime: `~/.venvs/e3sse-ions-0.4.1` (`runners.bvse.python`), Python 3.11 with `ions==0.4.1` (the release matching LiTraj `c3ca5c2` `notebooks/bvse_neb.ipynb`; it reproduces that notebook's Li3PO4 example: fmax 0.076 eV/Å, barrier 0.293 eV), its undeclared `pyyaml`, and the ASE and numpy it resolves. Build it from its own lock file. The reproduction audit against nebDFT2k `_init.xyz` confirms or refutes the pin.
+- BVSE runtime: `~/.venvs/e3sse-ions-0.4.1` (`runners.bvse.python`), Python 3.11 with `ions==0.4.1` (it computes the same BVSE paths as 0.3.5 and 0.4, the code family that wrote nebDFT2k `_init.xyz`), its undeclared `pyyaml`, and the ASE, numpy and pymatgen it resolves. Build it from its own lock file. The recipe (`bvse_recipe`) is the generation method reconstructed from the archive: BVAnalyzer oxidation states, `SaddleFinder.run` without endpoint relaxation, 5 or 7 images by hop length. The LiTraj demo-notebook recipe was refuted; see `docs/research/bvse_reproduction_reconstruction.md`. The reproduction audit against nebDFT2k `_init.xyz` confirms or refutes the pin.
 - Pristine structures: `runners.structures.source` must be pinned from the data-engineer server audit (`ase_per_material` pattern or `optimade_jsonl` path). Until then, the descriptor and BVSE stages report missing evidence.
 
 - Project environment: `/srv/ben/e3sse/.venv` (Python 3.14), `pip install -e ".[dev,figures]"`. It holds no MLIP package.

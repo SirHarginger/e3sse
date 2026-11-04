@@ -1,13 +1,22 @@
 """bvse_reproduction: frozen BVSE initial paths (ions) and their reproduction check.
 
 Runs with the dedicated BVSE runtime interpreter (``runners.bvse.python``), whose
-``ions`` version must equal the configured pin (``runners.bvse.ions_version``; the
-candidate 0.4.1 is the release matching LiTraj c3ca5c2 ``notebooks/bvse_neb.ipynb``).
-The recipe is that notebook's, applied to the unit's own rate-limiting edge:
+``ions`` version must equal the configured pin (``runners.bvse.ions_version``).  The
+recipe is the historical nebDFT2k generation method reconstructed from the archive
+(docs/research/bvse_reproduction_reconstruction.md), applied to the unit's own edge:
 
-    Decorator().decorate(atoms); collect_bvse_params(atoms, "Li", 1)
-    Edge(atoms, source, target, offset).superedge(8.0).interpolate(n_images=5)
-    SaddleFinder().bvse_neb(images); FIRE(neb, logfile=None).run(fmax=0.1, steps=100)
+    oxidation states: pymatgen BVAnalyzer().get_valences (``decoration``)
+    collect_bvse_params(atoms, "Li", 1)
+    edge = Edge(atoms, source, target, offset)
+    edge.superedge(8.0).interpolate(n_images=7 if edge.length >= 4.5 else 5)
+    neb = SaddleFinder().bvse_neb(images, k=2.0, default=True, distort=True, gm=False)
+    SaddleFinder().run(neb, fmax=0.1, steps=100, relax_endpoints=False)
+
+``run`` relaxes the band in the seed-42 perturbed framework, subtracts the
+perturbation and relaxes again (ions' documented procedure); the archived paths carry
+no perturbation and unrelaxed endpoints, hence ``relax_endpoints=False``.  The image
+count rule (``image_count``) is the archive's observed convention, adopted under the
+frozen ``image_count`` provision; it depends only on the structure and the edge.
 
 For development and P units the regenerated path is compared with nebDFT2k
 ``<edge_id>_init.xyz`` (geometry only): same image count, atom count and order, cell
@@ -20,11 +29,12 @@ nebBVSE122k barrier of the same edge (label-free) and recorded, and excluded onl
 under a frozen ``pool_barrier_tolerance_eV``.
 
 Every ``SaddleFinder.bvse_neb`` option is passed explicitly from the frozen
-``ml_neb.bvse_recipe`` (ions 0.4.1 defaults: ``k=2.0``, ``default=True`` which builds
+``ml_neb.bvse_recipe`` (``k=2.0``, ``default=True`` which builds
 ``NEB(climb=False, method='improvedtangent')``, ``distort=True`` which adds a
-seed-42 framework perturbation of at most 0.2 A that is kept in the paths, as in the
-notebook, ``gm=False``).  The runtime's package versions are verified against its
-pinned lock (``runners.bvse.environment_lock``) and enter the shard identity.
+seed-42 framework perturbation of at most 0.2 A that ``run`` removes before its final
+relaxation, ``gm=False``), as are the decoration and the ``run`` driver options.  The
+runtime's package versions are verified against its pinned lock
+(``runners.bvse.environment_lock``) and enter the shard identity.
 """
 
 from __future__ import annotations
@@ -46,6 +56,7 @@ CODE_FILES = ("src/e3sse/production/runners/bvse_paths.py",
 INFRASTRUCTURE = (MemoryError, OSError, KeyboardInterrupt, SystemExit)
 RUNTIME_PACKAGES = ("ions", "ase", "numpy", "scipy", "spglib", "pymatgen", "networkx", "PyYAML")
 BVSE_NEB_OPTIONS = ("k", "default", "distort", "gm")
+DECORATIONS = ("pymatgen_bvanalyzer", "ions_decorator")
 
 
 POOL_TOLERANCE_EVIDENCE_SOURCES = ("bvse_reproduction_server_audit",
@@ -86,14 +97,30 @@ def recipe(protocol_amendments: dict[str, Any]) -> dict[str, Any]:
     options = frozen["bvse_neb_options"]
     if sorted(options) != sorted(BVSE_NEB_OPTIONS):
         raise RunnerValidationError(f"bvse_neb_options must name exactly {BVSE_NEB_OPTIONS}")
+    if frozen.get("decoration") not in DECORATIONS:
+        raise RunnerValidationError(f"bvse_recipe.decoration must be one of {DECORATIONS}")
+    count = frozen.get("image_count") or {}
+    if (sorted(count) != ["long_hop_images", "long_hop_min_length_A", "short_hop_images"]
+            or not all(isinstance(count[k], int) and count[k] >= 3 and count[k] % 2
+                       for k in ("short_hop_images", "long_hop_images"))
+            or not float(count["long_hop_min_length_A"]) > 0):
+        raise RunnerValidationError("bvse_recipe.image_count must be {short_hop_images, "
+                                    "long_hop_images (odd ints >= 3), long_hop_min_length_A}")
+    driver = frozen.get("driver") or {}
+    if driver.get("name") != "SaddleFinder.run" or not isinstance(driver.get("relax_endpoints"), bool):
+        raise RunnerValidationError("bvse_recipe.driver must be {name: 'SaddleFinder.run', "
+                                    "relax_endpoints: <bool>}")
     pool_tolerance = frozen.get("pool_barrier_tolerance_eV")
     if pool_tolerance is not None:
         problem = pool_tolerance_evidence_problem(frozen.get("pool_barrier_tolerance_evidence"))
         if problem:
             raise RunnerValidationError(f"pool BVSE tolerance evidence: {problem}")
-    return {"mobile_symbol": frozen["mobile_symbol"], "mobile_charge": int(frozen["mobile_charge"]),
+    return {"decoration": frozen["decoration"], "relax_endpoints": driver["relax_endpoints"],
+            "mobile_symbol": frozen["mobile_symbol"], "mobile_charge": int(frozen["mobile_charge"]),
             "superedge_cutoff_A": float(frozen["superedge_cutoff_A"]),
-            "n_images": int(frozen["n_images"]),
+            "image_count": {"short_hop_images": count["short_hop_images"],
+                            "long_hop_images": count["long_hop_images"],
+                            "long_hop_min_length_A": float(count["long_hop_min_length_A"])},
             "bvse_neb_options": {"k": float(options["k"]), "default": bool(options["default"]),
                                  "distort": bool(options["distort"]), "gm": bool(options["gm"])},
             "fire_fmax": float(frozen["fire"]["fmax"]), "fire_steps": int(frozen["fire"]["steps"]),
@@ -171,6 +198,13 @@ def compare_paths(generated: list[dict[str, Any]], reference: list[dict[str, Any
             "max_cell_difference_A": worst_cell, "max_position_difference_A": worst_position}
 
 
+def n_images(edge_length_A: float, rule: dict[str, Any]) -> int:
+    """Frozen image count: long hops (unwrapped Edge.length) get more images."""
+
+    return (rule["long_hop_images"] if float(edge_length_A) >= rule["long_hop_min_length_A"]
+            else rule["short_hop_images"])
+
+
 def _geometry(atoms: Any) -> dict[str, Any]:
     return {"numbers": [int(z) for z in atoms.numbers], "positions": atoms.positions.tolist(),
             "cell": atoms.cell.array.tolist() if hasattr(atoms.cell, "array") else
@@ -182,7 +216,6 @@ def bvse_path_task(payload: dict[str, Any], context: Any) -> dict[str, Any]:
     """One unit: decorate, BVSE parameters, superedge path, BVSE NEB, compare."""
 
     from ase import Atoms
-    from ase.optimize import FIRE
 
     settings = payload["recipe"]
     result: dict[str, Any] = {"unit_key": payload["unit_key"], "unit_id": payload["unit_id"]}
@@ -190,9 +223,17 @@ def bvse_path_task(payload: dict[str, Any], context: Any) -> dict[str, Any]:
     atoms = Atoms(numbers=structure["numbers"], positions=structure["positions"],
                   cell=structure["cell"], pbc=structure["pbc"])
     try:
-        from ions import Decorator
+        if settings["decoration"] == "pymatgen_bvanalyzer":
+            import numpy as np
+            from pymatgen.analysis.bond_valence import BVAnalyzer
+            from pymatgen.io.ase import AseAtomsAdaptor
 
-        atoms = Decorator().decorate(atoms)
+            valences = BVAnalyzer().get_valences(AseAtomsAdaptor.get_structure(atoms))
+            atoms.set_array("oxi_states", np.array(valences))  # the array ions reads
+        else:
+            from ions import Decorator
+
+            atoms = Decorator().decorate(atoms)
     except INFRASTRUCTURE:
         raise
     except Exception as exc:  # the oxidation-state decoration is its own failure category
@@ -206,12 +247,14 @@ def bvse_path_task(payload: dict[str, Any], context: Any) -> dict[str, Any]:
         edge = Edge(atoms, payload["edge"]["source"], payload["edge"]["target"],
                     payload["edge"]["offset"])
         images = edge.superedge(settings["superedge_cutoff_A"]).interpolate(
-            n_images=settings["n_images"])
+            n_images=n_images(edge.length, settings["image_count"]))
         finder = SaddleFinder()
         neb = finder.bvse_neb(images, **settings["bvse_neb_options"])
         perturbation = max((float(abs(image.info["perturbation"]).max()) for image in images
                             if "perturbation" in image.info), default=0.0)
-        FIRE(neb, logfile=None).run(fmax=settings["fire_fmax"], steps=settings["fire_steps"])
+        # band in the perturbed framework, perturbation subtracted, band relaxed again
+        finder.run(neb, steps=settings["fire_steps"], fmax=settings["fire_fmax"],
+                   relax_endpoints=settings["relax_endpoints"], logfile=None)
         bvse_fmax = float(abs(neb.get_forces()).max())
         bvse_barrier = float(finder.get_barrier(images))
     except INFRASTRUCTURE:

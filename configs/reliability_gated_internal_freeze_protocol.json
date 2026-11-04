@@ -429,7 +429,7 @@
           "barrier": "litraj.utils.get_barrier: max - min image energy",
           "calculator": "mace_mp(model='small', default_dtype='float64')"
         },
-        "bvse_initialization_for_new_structures": "ions package: Decorator oxidation states, collect_bvse_params(Li, +1), Percolator(upper_bound=8.0 A), mincut_maxdim(tr=0.5), unique_edges, edge.superedge(8.0).interpolate(n_images=5), SaddleFinder.bvse_neb, FIRE fmax=0.1 steps=100",
+        "bvse_initialization_for_new_structures": "ions package as in bvse_recipe (amended 2026-11-04): pymatgen BVAnalyzer oxidation states, collect_bvse_params(Li, +1), Percolator(upper_bound=8.0 A), mincut_maxdim(tr=0.5), unique_edges, edge.superedge(8.0).interpolate(n_images = 7 if Edge.length >= 4.5 A else 5), SaddleFinder.bvse_neb(distort=True), SaddleFinder.run(fmax=0.1, steps=100, relax_endpoints=False)",
         "proposed_frozen_rule": {
           "initial_path": "BVSE path from the pinned ions pipeline for every unit (calibration and pool), so the predictor is identical; the generated calibration paths are checked against nebDFT2k _init.xyz",
           "neb": "as LiTraj (k=5.0, climbing image, improvedtangent, fixed cell)",
@@ -477,7 +477,7 @@
           "identity": "runtime environment (package versions) is part of model identity; every ML-NEB output is bound to its environment lock"
         },
         "bvse_reproduction": {
-          "rule": "pin the ions version; freeze superedge size (8.0 A) and n_images (5); for calibration hops require the regenerated path to match nebDFT2k _init.xyz (same atom count, order, cell; positions within a frozen tolerance)",
+          "rule": "pin the ions version; freeze superedge size (8.0 A) and the image count (5; amended 2026-11-04 under frozen_numeric_settings.image_count to bvse_recipe.image_count: 7 if Edge.length >= 4.5 A else 5); for calibration hops require the regenerated path to match nebDFT2k _init.xyz (same atom count, order, cell; positions within a frozen tolerance)",
           "mismatch": "exclude and count; report the reproduction rate",
           "decorator_failures": "oxidation-state decoration failures are a separate initialisation-failure category"
         },
@@ -547,11 +547,17 @@
         },
         "runtime_audit_artifact": "per runtime: asserted ASE/ions/torch versions, FIRE and NEB settings above, thread count; produced on the server",
         "bvse_recipe": {
-          "source": "LiTraj c3ca5c2 notebooks/bvse_neb.ipynb with every ions 0.4.1 SaddleFinder.bvse_neb default written out",
+          "source": "historical nebDFT2k _init.xyz generation method reconstructed from the archive (docs/research/bvse_reproduction_reconstruction.md, 2026-11-04): ions >=0.3.5 code family (0.3.5, 0.4 and 0.4.1 compute identical paths), pymatgen BVAnalyzer oxidation states, SaddleFinder.bvse_neb with every default written out, SaddleFinder.run without endpoint relaxation. Supersedes the LiTraj c3ca5c2 notebooks/bvse_neb.ipynb demo recipe (perturbation kept, ions Decorator), refuted by the server reproduction audit (rate 0.0)",
+          "decoration": "pymatgen_bvanalyzer",
+          "decoration_note": "oxidation states from pymatgen.analysis.bond_valence.BVAnalyzer().get_valences on the pristine structure, set as the ions oxi_states array (the LiTraj notebook's recommended decoration for many structures; equals the archived oxi_states where ions Decorator does not); a BVAnalyzer failure is a decorator_failure",
           "mobile_symbol": "Li",
           "mobile_charge": 1,
           "superedge_cutoff_A": 8.0,
-          "n_images": 5,
+          "image_count": {
+            "short_hop_images": 5,
+            "long_hop_images": 7,
+            "long_hop_min_length_A": 4.5
+          },
           "bvse_neb_options": {
             "k": 2.0,
             "default": true,
@@ -559,7 +565,13 @@
             "gm": false
           },
           "implied_neb": "default=True builds ase NEB(climb=False, k=2.0, method='improvedtangent')",
-          "distortion": "distort=True adds a seed-42 normal framework perturbation scaled to at most 0.2 A (zero on the mobile Li), identical for every image; kept in the paths handed to ML-NEB, as in the notebook; its maximum is recorded per unit",
+          "distortion": "distort=True adds a seed-42 normal framework perturbation scaled to at most 0.2 A (zero on the mobile Li), identical for every image; SaddleFinder.run subtracts it before its final relaxation, so the paths handed to ML-NEB carry no perturbation (as in the archive); its applied maximum is recorded per unit",
+          "driver": {
+            "name": "SaddleFinder.run",
+            "relax_endpoints": false
+          },
+          "driver_note": "SaddleFinder.run(neb, fmax=fire.fmax, steps=fire.steps, relax_endpoints=false): FIRE on the band, perturbation subtracted, FIRE on the band again (ions' documented procedure); endpoints are not relaxed because every archived endpoint Li sits on its lattice site",
+          "image_count_note": "interpolate(n_images=7) when the unit's ions Edge.length (unwrapped source-target distance from the pristine structure) is >= long_hop_min_length_A, else n_images=5; applied identically to every side, pool included. Adopted under frozen_numeric_settings.image_count ('unless the reproduction audit shows nebDFT2k _init.xyz differs, which is then recorded'): audit evidence, not ions or LiTraj provenance (no source states it). Archive: 1253 paths with 5 images (Edge.length 2.049-4.494 A), 428 with 7 (4.502-5.989 A); 1681/1681 consistent; >= vs > at 4.5 A is not identifiable (no hop in 4.4941-4.5019 A); hops beyond 5.989 A are extrapolated with 7. Keeping n_images=5 would exclude every calibration hop >= 4.5 A while pool hops of any length remain, leaving the hop_length_A density-ratio feature without calibration support (statistical-validator review 2026-11-04)",
           "fire": {
             "fmax": 0.1,
             "steps": 100
@@ -909,7 +921,7 @@
       "blocker_class": "server_evidence",
       "resolution": {
         "status": "resolved",
-        "rule": "runners.bvse (ions 0.4.1, environment_lock pinned in configs/production_execution.json)",
+        "rule": "runners.bvse (ions 0.4.1, environment_lock pinned in configs/production_execution.json) with amendments.prospective.ml_neb.bvse_recipe as amended 2026-11-04. Pre-declared outcome recorded: the frozen notebook recipe (perturbation kept, Decorator, n_images=5) was REFUTED by the server audit (calibration reproduction rate 0.0; max-position median 0.2476 A = the kept seed-42 perturbation). The amended recipe (BVAnalyzer decoration, SaddleFinder.run without endpoint relaxation, 5/7 images at Edge.length 4.5 A) is a post-evidence, outcome-free amendment: it was chosen by comparing 6 historically motivated candidates against nebDFT2k _init.xyz geometry (calibration-side BVSE paths; no DFT label, relaxed path or ML-NEB result read), so the server rate under it is an in-sample fidelity check of the reconstruction, not a pre-declared test. Local verification of the production code on all 1681 public nebDFT2k paths with a lock byte-identical to the server runtime: 1666/1667 reproduced (docs/research/bvse_reproduction_reconstruction.md)",
         "evidence": "this run's bvse_reproduction stage: pinned runtime verified against its lock; pin confirmed when more checked calibration-side paths reproduce _init.xyz than not (criterion fixed 2026-11-03 before any BVSE evidence)",
         "verified_by_preflight_checks": [
           "run_evidence:bvse_reproduction",

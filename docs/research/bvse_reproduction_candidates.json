@@ -1,0 +1,900 @@
+{
+ "schema": "e3sse.bvse-reproduction-candidates",
+ "created": "2026-11-04",
+ "acceptance_rule": "unchanged: per unit identical image/atom count and order, cell <= 1e-4 A, every atom <= 0.01 A (find_mic); pin confirmed iff calibration reproduction rate > 0.5 (preflight.BVSE_PIN_MIN_REPRODUCTION_RATE)",
+ "outcome_access": "none: only _init.xyz geometry, ions per-atom arrays and BVSE energies, BVEL13k pristine geometry and the nebBVSE122k BVSE barrier (label-free) were read; no em_dft, *_relaxed.xyz or ML-NEB result",
+ "data": {
+  "source": "public LiTraj downloads (https://bs3u.obs.ru-moscow-1.hc.sbercloud.ru/litraj/), 2026-11-04",
+  "zip_sha256": {
+   "nebDFT2k.zip": "b7a99d89337902e9e1da319f57547170fdb132bf15bf6ffef03a0140e2207d7f",
+   "BVEL13k.zip": "3d89f921c47101bd3c9050e92829813e57f05b8178ef5bc3ce16dfb58b845c22",
+   "nebBVSE122k.zip": "8b90c44902cd799de45b3e30ba70f0cf463f8a60b199fcd3a675caa5316bbe0a"
+  },
+  "bvel13k_shard_sha256": {
+   "BVEL13k_train.xyz": "f60a02a324e2f5752da637fa8a610ced26fb2116aae6170b1cd7de884fe75a9f",
+   "BVEL13k_val.xyz": "0de8ee249b804c99d071e93b00ad5780f58af94b54d8ffcc4ce39d0ce16c94c9",
+   "BVEL13k_test.xyz": "ee12cc00fd4cbe7898caf728e798b9863a653ac12ae54d65a2e189ca46b46943"
+  },
+  "note": "compare with the server G0 manifest before relying on these numbers for the server subset"
+ },
+ "environments": {
+  "cur": "Python 3.11.16; requirements lock SHA-256 6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a = the server runners.bvse.environment_lock (ions 0.4.1, ase 3.29.0, numpy 2.4.6, scipy 1.17.1, pymatgen 2026.10.24, spglib 2.8.0)",
+  "h04": "as cur but ions==0.4 (lock 6571005e9e594dbebf0917490d173e2989d62bf733da6b6a0d960c0bbee73fbf)",
+  "h035": "ions==0.3.5 with the PyPI state of 2024-08-21 (uv --exclude-newer): ase 3.23.0, numpy 2.1.0, scipy 1.14.1, pymatgen 2024.8.9, spglib 2.5.0, networkx 3.3 (lock 1429993f4ba54512678d3bffa113a836e29d05bd6e8d789b5aad15e13484b6fc)"
+ },
+ "panel_rule": {
+  "rule": "per C0 category, ascending sha256(edge_id), one unit per material; C0 = current pin on server-identical lock",
+  "categories": {
+   "mismatch_geometry_outside_tolerance": [
+    "mp-1246806_2_10_0_0_0",
+    "mp-568365_24_1_0_1_1",
+    "mp-25397_2_4_1_0_0",
+    "mp-850924_8_13_1_-1_0",
+    "mp-1177146_1_5_0_0_0",
+    "mp-777406_6_7_1_0_0",
+    "mp-684024_0_4_0_0_0",
+    "mp-778877_10_21_0_0_0",
+    "mp-774572_2_3_0_0_0",
+    "mp-771706_0_1_1_0_0",
+    "mp-770212_0_9_0_0_1",
+    "mp-780226_5_0_1_1_0"
+   ],
+   "mismatch_image_count_differs": [
+    "mp-774334_6_7_0_0_0",
+    "mp-776663_1_3_0_0_1",
+    "mp-759082_1_0_0_1_0",
+    "mp-755153_3_1_0_1_0",
+    "mp-26561_0_4_0_0_1",
+    "mp-567219_0_2_0_1_0"
+   ],
+   "bvse_not_converged": [
+    "mp-760791_1_6_0_1_0",
+    "mp-720509_0_16_0_0_1",
+    "mp-1222563_1_3_0_1_1",
+    "mp-770519_2_4_1_0_0",
+    "mp-757842_3_2_0_1_1",
+    "mp-756529_0_1_0_1_-1"
+   ],
+   "decorator_failure": [
+    "mp-768421_3_7_0_0_0",
+    "mp-1223068_9_11_1_0_0",
+    "mp-1639651_6_2_1_0_0",
+    "mp-850928_0_1_0_0_1"
+   ],
+   "ions_failure": [
+    "mp-768690_0_0_1_0_0",
+    "mp-6326_0_11_1_0_0",
+    "mp-756675_0_2_1_0_0",
+    "mp-753104_0_1_0_0_0"
+   ]
+  }
+ },
+ "candidates": [
+  {
+   "candidate": "C0 on ions 0.4.1 server-identical lock, n_images=5",
+   "variant": "C0",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 32,
+   "counts": {
+    "bvse_not_converged": 6,
+    "decorator_failure": 4,
+    "ions_failure": 4,
+    "reproduction_mismatch": 24
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 15,
+    "image_count_differs": 9
+   },
+   "reproduction_rate": 0.0,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": false,
+   "max_position_difference_A": {
+    "n": 15,
+    "min": 0.2441144920417814,
+    "median": 0.2476337385220193,
+    "p90": 0.3236538689426468,
+    "max": 0.579358298958637
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 24,
+    "min": 0.0031212316996958034,
+    "median": 0.15003797473294433,
+    "p90": 1.7530379956779818,
+    "max": 4.120600951495752
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 24,
+    "min": 0.001685565898815966,
+    "median": 0.10761814789311042,
+    "p90": 1.6856994338509175,
+    "max": 4.395387466390643
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "current pin: LiTraj c3ca5c2 demo notebook recipe (perturbation kept, ions Decorator, n_images=5)",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C1 on ions 0.4.1 server-identical lock, n_images=5",
+   "variant": "C1",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 32,
+   "counts": {
+    "bvse_not_converged": 2,
+    "decorator_failure": 4,
+    "ions_failure": 4,
+    "reproduced": 3,
+    "reproduction_mismatch": 21
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 12,
+    "image_count_differs": 9
+   },
+   "reproduction_rate": 0.125,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": false,
+   "max_position_difference_A": {
+    "n": 15,
+    "min": 0.004621386994209616,
+    "median": 0.02226452596410216,
+    "p90": 0.11524040818818602,
+    "max": 1.0556336191771665
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 24,
+    "min": 1.5787944751544103e-07,
+    "median": 0.012948324313209802,
+    "p90": 0.795508246871226,
+    "max": 1.1740384360456855
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 24,
+    "min": 0.0002760571458293448,
+    "median": 0.015558522341521552,
+    "p90": 0.6181722932020977,
+    "max": 1.064585278408499
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "ions >=0.3.5 bvse_neb(distort=False): would give an unperturbed framework as in the archive",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C2 on ions 0.4.1 server-identical lock, n_images=5",
+   "variant": "C2",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 32,
+   "counts": {
+    "bvse_not_converged": 1,
+    "decorator_failure": 4,
+    "ions_failure": 4,
+    "reproduced": 14,
+    "reproduction_mismatch": 10
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 1,
+    "image_count_differs": 9
+   },
+   "reproduction_rate": 0.5833333333333334,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 15,
+    "min": 6.066827292845883e-09,
+    "median": 1.3112376165793748e-08,
+    "p90": 1.044675724334518e-07,
+    "max": 0.01430944395338944
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 24,
+    "min": 1.5787944751544103e-07,
+    "median": 0.013542401806336424,
+    "p90": 1.174399514671888,
+    "max": 1.3920019403773463
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 24,
+    "min": 7.172342719741209e-10,
+    "median": 0.03084363200662743,
+    "p90": 0.9405588291558398,
+    "max": 1.3802528141449228
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "ions SaddleFinder.run step (documented in ions README at 5bc0674 = 0.4): FIRE, subtract perturbation, FIRE; endpoints unrelaxed as in the archive",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C3 on ions 0.4.1 server-identical lock, n_images=5",
+   "variant": "C3",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 32,
+   "counts": {
+    "bvse_not_converged": 24,
+    "decorator_failure": 4,
+    "ions_failure": 4,
+    "reproduction_mismatch": 24
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 15,
+    "image_count_differs": 9
+   },
+   "reproduction_rate": 0.0,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": false,
+   "max_position_difference_A": {
+    "n": 15,
+    "min": 0.028842464723958676,
+    "median": 0.14610926728334808,
+    "p90": 0.3236538689426468,
+    "max": 0.579358298958637
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 24,
+    "min": 1.5787944751544103e-07,
+    "median": 0.044699406857922064,
+    "p90": 1.1769075673698612,
+    "max": 4.128406603471168
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 24,
+    "min": 0.003779609335262668,
+    "median": 0.09456313246512082,
+    "p90": 0.9234811070249513,
+    "max": 4.403193118366059
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "perturbation subtracted after one relaxation, no re-relaxation",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C4 on ions 0.4.1 server-identical lock, n_images=5",
+   "variant": "C4",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 32,
+   "counts": {
+    "bvse_not_converged": 1,
+    "decorator_failure": 4,
+    "ions_failure": 4,
+    "reproduction_mismatch": 24
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 15,
+    "image_count_differs": 9
+   },
+   "reproduction_rate": 0.0,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": false,
+   "max_position_difference_A": {
+    "n": 15,
+    "min": 0.15251710664963403,
+    "median": 0.28365202683019797,
+    "p90": 1.0932272703100196,
+    "max": 1.6730825293103504
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 24,
+    "min": 0.012900663563339076,
+    "median": 0.06439942297731704,
+    "p90": 1.1921670980309649,
+    "max": 1.426197201729779
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 24,
+    "min": 0.005525778136377113,
+    "median": 0.06275074083116516,
+    "p90": 1.1296772529082288,
+    "max": 1.4287765855475767
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "ions SaddleFinder.run default (relax_endpoints=True), as in the ions 0.4 README optimize()",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C2 on ions 0.4 (2024-08-29 release; rest = server lock), n_images=5",
+   "variant": "C2",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6571005e9e594dbebf0917490d173e2989d62bf733da6b6a0d960c0bbee73fbf",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 32,
+   "counts": {
+    "bvse_not_converged": 1,
+    "decorator_failure": 4,
+    "ions_failure": 4,
+    "reproduced": 14,
+    "reproduction_mismatch": 10
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 1,
+    "image_count_differs": 9
+   },
+   "reproduction_rate": 0.5833333333333334,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 15,
+    "min": 6.066827292845883e-09,
+    "median": 1.3112376165793748e-08,
+    "p90": 1.044675724334518e-07,
+    "max": 0.01430944395338944
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 24,
+    "min": 1.5787944751544103e-07,
+    "median": 0.013542401806336424,
+    "p90": 1.174399514671888,
+    "max": 1.3920019403773463
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 24,
+    "min": 7.172342719741209e-10,
+    "median": 0.03084363200662743,
+    "p90": 0.9405588291558398,
+    "max": 1.3802528141449228
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "ions SaddleFinder.run step (documented in ions README at 5bc0674 = 0.4): FIRE, subtract perturbation, FIRE; endpoints unrelaxed as in the archive",
+   "environment": "h04 (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C2 on ions 0.3.5 + Aug-2024 stack (ASE 3.23.0), n_images=5",
+   "variant": "C2",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "1429993f4ba54512678d3bffa113a836e29d05bd6e8d789b5aad15e13484b6fc",
+   "environment_lock_pins": [
+    "ase==3.23.0",
+    "ions==0.3.5",
+    "networkx==3.3",
+    "numpy==2.1.0",
+    "pymatgen==2024.8.9",
+    "pyyaml==6.0.2",
+    "scipy==1.14.1",
+    "spglib==2.5.0"
+   ],
+   "units": 32,
+   "counts": {
+    "bvse_not_converged": 1,
+    "decorator_failure": 4,
+    "ions_failure": 4,
+    "reproduced": 14,
+    "reproduction_mismatch": 10
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 1,
+    "image_count_differs": 9
+   },
+   "reproduction_rate": 0.5833333333333334,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 15,
+    "min": 6.066827292845883e-09,
+    "median": 1.3112376165793748e-08,
+    "p90": 1.0446740425947253e-07,
+    "max": 0.014309443953389865
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 24,
+    "min": 1.5787944862566405e-07,
+    "median": 0.013542401806336424,
+    "p90": 1.1743995146718889,
+    "max": 1.3920019403773534
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 24,
+    "min": 7.172351601525406e-10,
+    "median": 0.03084363200662832,
+    "p90": 0.9405588291558415,
+    "max": 1.3802528141449206
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "ions SaddleFinder.run step (documented in ions README at 5bc0674 = 0.4): FIRE, subtract perturbation, FIRE; endpoints unrelaxed as in the archive",
+   "environment": "h035 (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C5 panel",
+   "variant": "C5",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 32,
+   "counts": {
+    "bvse_not_converged": 1,
+    "ions_failure": 4,
+    "reproduced": 18,
+    "reproduction_mismatch": 10
+   },
+   "mismatch_reasons": {
+    "image_count_differs": 10
+   },
+   "reproduction_rate": 0.6428571428571429,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 18,
+    "min": 6.066827292845883e-09,
+    "median": 1.3112376165793748e-08,
+    "p90": 1.7117487539139654e-08,
+    "max": 1.044675724334518e-07
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 28,
+    "min": 1.5787944751544103e-07,
+    "median": 0.01190142364374469,
+    "p90": 0.8359971869003551,
+    "max": 1.3920019403773463
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 28,
+    "min": 7.172342719741209e-10,
+    "median": 0.03084363200662743,
+    "p90": 0.9175328565750687,
+    "max": 1.3802528141449228
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "C2 + pymatgen BVAnalyzer oxidation states (LiTraj bvse_neb.ipynb recommends BVAnalyzer for many structures; equals archived oxi_states where ions Decorator does not)",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "DIAGNOSTIC: C2 on ions 0.4.1, n_images = archived count",
+   "variant": "C2",
+   "count_from_reference_DIAGNOSTIC_ONLY": true,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 32,
+   "counts": {
+    "decorator_failure": 4,
+    "ions_failure": 4,
+    "reproduced": 23,
+    "reproduction_mismatch": 1
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 1
+   },
+   "reproduction_rate": 0.9583333333333334,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 24,
+    "min": 6.066827292845883e-09,
+    "median": 1.4039162872569839e-08,
+    "p90": 3.309160173078404e-08,
+    "max": 0.01430944395338944
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 24,
+    "min": 1.5787944751544103e-07,
+    "median": 0.013523849838107838,
+    "p90": 0.5678115672713204,
+    "max": 1.174399514671888
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 24,
+    "min": 7.172342719741209e-10,
+    "median": 0.009900100864581596,
+    "p90": 0.6263643098168039,
+    "max": 0.9175328565750687
+   },
+   "scope": "diagnostic panel (32 units)",
+   "historical_plausibility": "ions SaddleFinder.run step (documented in ions README at 5bc0674 = 0.4): FIRE, subtract perturbation, FIRE; endpoints unrelaxed as in the archive",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C0 current pin: ions 0.4.1, distort kept, n_images=5 (server-identical lock)",
+   "variant": "C0",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 1681,
+   "counts": {
+    "bvse_not_converged": 45,
+    "decorator_failure": 24,
+    "ions_failure": 4,
+    "reproduction_mismatch": 1653
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 1234,
+    "image_count_differs": 419
+   },
+   "reproduction_rate": 0.0,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": false,
+   "max_position_difference_A": {
+    "n": 1234,
+    "min": 0.24411448705492142,
+    "median": 0.24763373741439923,
+    "p90": 0.26078462557458565,
+    "max": 2.2161790159451495
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 1653,
+    "min": 0.000253512450574922,
+    "median": 0.10289359814251209,
+    "p90": 0.4172468113413459,
+    "max": 5.0752172616970785
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 1653,
+    "min": 8.501926415882544e-05,
+    "median": 0.12356102093079313,
+    "p90": 0.49482989419109913,
+    "max": 6.332842659934855
+   },
+   "scope": "all 1681 public nebDFT2k paths",
+   "historical_plausibility": "current pin: LiTraj c3ca5c2 demo notebook recipe (perturbation kept, ions Decorator, n_images=5)",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C2 on ions 0.4.1 server-identical lock, n_images=5",
+   "variant": "C2",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 1681,
+   "counts": {
+    "bvse_not_converged": 16,
+    "decorator_failure": 24,
+    "ions_failure": 4,
+    "reproduced": 1148,
+    "reproduction_mismatch": 505
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 86,
+    "image_count_differs": 419
+   },
+   "reproduction_rate": 0.6944948578342408,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 1234,
+    "min": 4.2572415032088236e-09,
+    "median": 1.3221466058616471e-08,
+    "p90": 2.8075808322592582e-08,
+    "max": 1.492781891128298
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 1653,
+    "min": 5.0652079197632816e-08,
+    "median": 0.008206607643591213,
+    "p90": 0.24928047685390897,
+    "max": 4.948512363593599
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 1653,
+    "min": 4.402678221993028e-11,
+    "median": 0.007257817000768441,
+    "p90": 0.30558713682926886,
+    "max": 4.8223507337664735
+   },
+   "scope": "all 1681 public nebDFT2k paths",
+   "historical_plausibility": "ions SaddleFinder.run step (documented in ions README at 5bc0674 = 0.4): FIRE, subtract perturbation, FIRE; endpoints unrelaxed as in the archive",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "DIAGNOSTIC: C2, n_images = archived count",
+   "variant": "C2",
+   "count_from_reference_DIAGNOSTIC_ONLY": true,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 1681,
+   "counts": {
+    "bvse_not_converged": 6,
+    "decorator_failure": 24,
+    "ions_failure": 4,
+    "reproduced": 1541,
+    "reproduction_mismatch": 112
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 112
+   },
+   "reproduction_rate": 0.9322444041137327,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 1653,
+    "min": 4.2572415032088236e-09,
+    "median": 1.337271183937284e-08,
+    "p90": 3.309160173078404e-08,
+    "max": 2.192814925894321
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 1653,
+    "min": 5.0652079197632816e-08,
+    "median": 0.007510557664842654,
+    "p90": 0.21608332384323825,
+    "max": 6.103613569936423
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 1653,
+    "min": 4.402678221993028e-11,
+    "median": 3.3590534886940304e-07,
+    "p90": 0.24189348579552084,
+    "max": 4.7923297131976845
+   },
+   "scope": "all 1681 public nebDFT2k paths",
+   "historical_plausibility": "ions SaddleFinder.run step (documented in ions README at 5bc0674 = 0.4): FIRE, subtract perturbation, FIRE; endpoints unrelaxed as in the archive",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "C5 = C2 + pymatgen BVAnalyzer oxidation states, ions 0.4.1 server lock, n_images=5",
+   "variant": "C5",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 1681,
+   "counts": {
+    "bvse_not_converged": 16,
+    "ions_failure": 14,
+    "reproduced": 1243,
+    "reproduction_mismatch": 424
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 1,
+    "image_count_differs": 423
+   },
+   "reproduction_rate": 0.7456508698260348,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 1244,
+    "min": 4.2572415032088236e-09,
+    "median": 1.3027830802601885e-08,
+    "p90": 1.5897747015977496e-08,
+    "max": 0.06967534668738025
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 1667,
+    "min": 5.0652079197632816e-08,
+    "median": 0.007012282786164503,
+    "p90": 0.23778828665074303,
+    "max": 4.615212686677086
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 1667,
+    "min": 4.402678221993028e-11,
+    "median": 0.002734493063315968,
+    "p90": 0.2840998324273545,
+    "max": 4.8223507337664735
+   },
+   "scope": "all 1681 public nebDFT2k paths",
+   "historical_plausibility": "C2 + pymatgen BVAnalyzer oxidation states (LiTraj bvse_neb.ipynb recommends BVAnalyzer for many structures; equals archived oxi_states where ions Decorator does not)",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "DIAGNOSTIC: C5, n_images = archived count",
+   "variant": "C5",
+   "count_from_reference_DIAGNOSTIC_ONLY": true,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 1681,
+   "counts": {
+    "bvse_not_converged": 8,
+    "ions_failure": 14,
+    "reproduced": 1666,
+    "reproduction_mismatch": 1
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 1
+   },
+   "reproduction_rate": 0.9994001199760048,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 1667,
+    "min": 4.2572415032088236e-09,
+    "median": 1.319198123014753e-08,
+    "p90": 1.6394999091884885e-08,
+    "max": 0.06967534668738025
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 1667,
+    "min": 5.0652079197632816e-08,
+    "median": 0.006442242616799598,
+    "p90": 0.20491097936388947,
+    "max": 6.103613569936423
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 1667,
+    "min": 4.402678221993028e-11,
+    "median": 2.037786646091888e-07,
+    "p90": 0.2164322716594369,
+    "max": 1.0273843802883986
+   },
+   "scope": "all 1681 public nebDFT2k paths",
+   "historical_plausibility": "C2 + pymatgen BVAnalyzer oxidation states (LiTraj bvse_neb.ipynb recommends BVAnalyzer for many structures; equals archived oxi_states where ions Decorator does not)",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  },
+  {
+   "candidate": "PROPOSED PIN: edited production code; ions 0.4.1 server-identical lock; BVAnalyzer; SaddleFinder.run(relax_endpoints=False); 5/7 images at Edge.length 4.5 A",
+   "variant": "PROD",
+   "count_from_reference_DIAGNOSTIC_ONLY": false,
+   "python": "3.11.16",
+   "environment_lock_sha256": "6c44de5a8087d806844f0250781fffa444620407a949c489cda43f0478b08b8a",
+   "environment_lock_pins": [
+    "ase==3.29.0",
+    "ions==0.4.1",
+    "networkx==3.6.1",
+    "numpy==2.4.6",
+    "pymatgen==2026.10.24",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+    "spglib==2.8.0"
+   ],
+   "units": 1681,
+   "counts": {
+    "bvse_not_converged": 8,
+    "ions_failure": 14,
+    "reproduced": 1666,
+    "reproduction_mismatch": 1
+   },
+   "mismatch_reasons": {
+    "geometry_outside_tolerance": 1
+   },
+   "reproduction_rate": 0.9994001199760048,
+   "frozen_rule": "per unit: identical image/atom count+order, cell <= 1e-4 A, every atom <= 0.01 A; pin confirmed iff rate > 0.5",
+   "frozen_rule_passes": true,
+   "max_position_difference_A": {
+    "n": 1667,
+    "min": 4.2572415032088236e-09,
+    "median": 1.319198123014753e-08,
+    "p90": 1.6394999091884885e-08,
+    "max": 0.06967534668738025
+   },
+   "abs_barrier_minus_nebbvse122k_eV": {
+    "n": 1667,
+    "min": 5.0652079197632816e-08,
+    "median": 0.006442303227617963,
+    "p90": 0.2049110534457086,
+    "max": 6.1036134773593504
+   },
+   "abs_barrier_minus_archived_init_energy_profile_eV": {
+    "n": 1667,
+    "min": 5.363531840885116e-11,
+    "median": 1.3476328719619346e-08,
+    "p90": 0.2164324391257635,
+    "max": 1.0273843802883986
+   },
+   "scope": "all 1681 public nebDFT2k paths",
+   "historical_plausibility": "amended production recipe = C5 + image count 7 if Edge.length >= 4.5 A else 5 (archive convention, frozen image_count provision)",
+   "environment": "cur (local build, see top-level environments; lock SHA-256 recorded here)"
+  }
+ ]
+}
