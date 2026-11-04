@@ -37,30 +37,6 @@ MANIFEST_NAMES = {"prepare": "prepare_manifest.json", "model": "model_manifest.j
                   "reduce": "stage_manifest.json"}
 
 
-def reuse_model_manifest(path: Path, args: argparse.Namespace) -> Path:
-    """A finished model phase of an unfinished stage is reused, not recomputed.
-
-    The orchestrator re-launches every model phase while the stage has no completion
-    record.  The manifest must name this stage, phase and model, and every output must
-    still match its SHA-256 (the rule stage completion records follow); otherwise this
-    fails closed.  Without it, a later code change to the stage would make that model's
-    finished shard checkpoints stale.
-    """
-
-    from e3sse.production.runners.context import RunnerValidationError, file_sha256, load_json
-
-    manifest = load_json(path)
-    expected = {"schema_version": "e3sse.production.stage-manifest", "stage": args.stage,
-                "phase": "model", "model": args.model}
-    if {key: manifest.get(key) for key in expected} != expected:
-        raise RunnerValidationError(f"{path} does not describe {args.stage}/{args.model}")
-    for name, output in manifest["outputs"].items():
-        output_path = Path(output["path"])
-        if not output_path.is_file() or file_sha256(output_path) != output["sha256"]:
-            raise RunnerValidationError(f"{path}: output {name!r} differs from its manifest")
-    return path
-
-
 def main(argv: list[str] | None = None) -> int:
     from e3sse.production.runners import RUNNER_MODULES
     from e3sse.production.runners.context import (
@@ -96,10 +72,6 @@ def main(argv: list[str] | None = None) -> int:
         memory_reserve_bytes=None if args.memory_reserve_gib is None
         else int(args.memory_reserve_gib * 1024 ** 3))
     try:
-        if args.phase == "model" and (ctx.work_dir / MANIFEST_NAMES["model"]).is_file():
-            manifest = reuse_model_manifest(ctx.work_dir / MANIFEST_NAMES["model"], args)
-            print(json.dumps({"manifest": str(manifest)}))
-            return 0
         result = function(ctx)
         outputs = {name: Path(path) for name, path in result["outputs"].items()}
         record = {"schema_version": "e3sse.production.stage-manifest", "stage": args.stage,
