@@ -463,3 +463,51 @@ def test_m3gnet_mp_disposition_is_recorded_as_permutation_rejection():
     assert failed_checks(report["structure_checks"][0]) == ["permutation_consistent"]
     assert applicability_source(representation_verified=False,
                                 descriptors_available=True) == "descriptor_space"
+
+
+_PINNED_REPORT = {"canonical_name": "toy", "adapter_name": "toy", "status": "pinned_module",
+                  "location": "captured tensor 'interaction:output'"}
+
+
+def test_production_capture_reads_both_report_shapes_and_fails_closed():
+    """Reports from before ``capture_mode`` existed carry the mode in ``status``; the
+    pinned location ``captured tensor '<capture>'`` is returned as the bare capture."""
+
+    from e3sse.representation.embedding_capability import production_capture
+
+    base = _PINNED_REPORT
+    current = {**base, "capture_mode": "pinned_module"}
+    assert production_capture(base, "pinned_module") == production_capture(
+        current, "pinned_module") == {"capture_mode": "pinned_module",
+                                      "location": "interaction:output"}
+    bad = {
+        "mode disagrees with status": ({**base, "capture_mode": "documented_api"}, "pinned_module"),
+        "pin disagrees": (base, "documented_api"),
+        "unusable status": ({**base, "status": "candidates_only"}, "candidates_only"),
+        "bare location": ({**base, "location": "interaction:output"}, "pinned_module"),
+        "unquoted": ({**base, "location": "captured tensor interaction:output"}, "pinned_module"),
+        "bad grammar": ({**base, "location": "captured tensor 'interaction'"}, "pinned_module"),
+        "no location": ({**base, "location": None}, "pinned_module"),
+        "wrong API": ({**base, "adapter_name": "mace", "status": "documented_api",
+                       "location": "chgnet.model.CHGNet.predict_structure(return_atom_feas=True)"
+                       "['atom_fea']"}, "documented_api"),
+    }
+    for label, (report, method) in bad.items():
+        with pytest.raises(ValueError):
+            production_capture(report, method)
+            pytest.fail(label)
+
+
+def test_production_capture_location_drives_the_pinned_extractor():
+    from e3sse.representation.atom_embeddings import embedding_extractor
+    from e3sse.representation.embedding_capability import (
+        capture_pinned_output,
+        production_capture,
+    )
+
+    calc = _toy_calculator()
+    atoms = probe_structures()[1]
+    extract = embedding_extractor({"adapter_name": "toy"}, calc,
+                                  **production_capture(_PINNED_REPORT, "pinned_module"))
+    expected = capture_pinned_output(calc.model, "interaction:output", _run(calc, atoms))
+    assert np.array_equal(extract(atoms), np.asarray(expected["interaction:output"], dtype=float))

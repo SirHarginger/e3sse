@@ -369,6 +369,45 @@ def capability_status(*, documented: bool, pinned_ok: bool | None, n_candidates:
     return "candidates_only" if n_candidates else "unavailable"
 
 
+PINNED_LOCATION_PREFIX = "captured tensor "
+
+
+def production_capture(report: Mapping[str, Any], capture_method: str) -> dict[str, str]:
+    """``capture_mode`` and extractor ``location`` of a validated capability report.
+
+    Two report shapes share ``CAPABILITY_SCHEMA``.  Reports written before the probe
+    recorded ``capture_mode`` lack that key; there the probe's ``status`` names the
+    capture that passed (``capability_status``), so it is the capture mode.  Both shapes
+    write a pinned module's ``location`` as ``captured tensor '<capture>'``; the
+    extractor needs the bare capture name.  Mode, status and the pinned
+    ``capture_method`` must agree, else this fails closed.
+    """
+
+    status = report.get("status")
+    mode = report.get("capture_mode", status)
+    name = report.get("canonical_name")
+    if not (mode == status == capture_method) or mode not in ("documented_api", "pinned_module"):
+        raise ValueError(f"{name}: capture mode {mode!r}, status {status!r} and pinned "
+                         f"capture method {capture_method!r} do not agree")
+    location = report.get("location")
+    if mode == "documented_api":
+        if location != DOCUMENTED_APIS.get(report.get("adapter_name")):
+            raise ValueError(f"{name}: documented-API location {location!r} is not the "
+                             f"{report.get('adapter_name')!r} API")
+        return {"capture_mode": mode, "location": location}
+    capture = None
+    if isinstance(location, str) and location.startswith(PINNED_LOCATION_PREFIX):
+        try:
+            capture = ast.literal_eval(location[len(PINNED_LOCATION_PREFIX):])
+        except (SyntaxError, ValueError):
+            capture = None
+    if not isinstance(capture, str) or f"{PINNED_LOCATION_PREFIX}{capture!r}" != location:
+        raise ValueError(f"{name}: pinned-module location {location!r} is not "
+                         f"\"{PINNED_LOCATION_PREFIX}'<capture>'\"")
+    parse_pinned_capture(capture)
+    return {"capture_mode": mode, "location": capture}
+
+
 def merge_manifest(reports: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """One manifest over per-model reports; usable means documented_api or pinned_module."""
 

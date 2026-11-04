@@ -654,3 +654,106 @@ def test_density_features_add_critical_barrier_and_tm_indicator_never_the_gap():
     assert density_features({**row, "critical_bvse_barrier_eV": None}) is None  # fail closed
     assert density_features({**row, "tm_hubbard_u": None}) is None
     assert density_features({**row, "vector": None}) is None
+
+
+def _capability_report(name, adapter, status, location, **extra):
+    """Keys every capability report carries (probe shape before and after c70a8e4)."""
+
+    return {"schema": "e3sse.embedding-capability", "canonical_name": name,
+            "checkpoint_sha256": "a" * 64, "adapter_name": adapter, "status": status,
+            "location": location, "structure_checks": [], "hook_candidates": [],
+            "error": None, **extra}
+
+
+def test_pinned_capture_reads_reports_written_before_capture_mode_existed(tmp_path):
+    """Regression: development_ml_neb stopped with KeyError 'capture_mode' at
+    M3GNet-MatPES-PBE-v2025.1-PES, whose pinned report predates that key."""
+
+    from e3sse.production.runners.ml_neb_units import pinned_capture
+
+    capture = "model.graph_layers.2:output[1]"
+    reports = {  # MatPES: earlier probe shape, no capture_mode; CHGNet: current shape
+        "M3GNet-MatPES-PBE-v2025.1-PES": (_capability_report(
+            "M3GNet-MatPES-PBE-v2025.1-PES", "matgl", "pinned_module",
+            f"captured tensor {capture!r}"), "pinned_module"),
+        "CHGNet-0.3.0": (_capability_report(
+            "CHGNet-0.3.0", "chgnet", "documented_api",
+            "chgnet.model.CHGNet.predict_structure(return_atom_feas=True)['atom_fea']",
+            capture_mode="documented_api"), "documented_api"),
+        "SevenNet-0-11July2024": (_capability_report(
+            "SevenNet-0-11July2024", "sevennet", "pinned_module",
+            "captured tensor \"reduce_input_to_hidden:output['x']\""), "pinned_module"),
+    }
+    pins = {}
+    for name, (report, method) in reports.items():
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(report), encoding="utf-8")
+        pins[name] = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                      "latent_support_status": "validated", "capture_method": method}
+    amendments = {"representation": {"embedding_capability_evidence": {"reports": pins}}}
+
+    matpes = pinned_capture(None, "M3GNet-MatPES-PBE-v2025.1-PES", amendments)
+    assert matpes == {"capture_mode": "pinned_module", "location": capture,
+                      "report_sha256": pins["M3GNet-MatPES-PBE-v2025.1-PES"]["sha256"]}
+    # The documented-API capture keeps exactly its previous value.
+    assert pinned_capture(None, "CHGNet-0.3.0", amendments) == {
+        "capture_mode": "documented_api", "location": reports["CHGNet-0.3.0"][0]["location"],
+        "report_sha256": pins["CHGNet-0.3.0"]["sha256"]}
+    assert pinned_capture(None, "SevenNet-0-11July2024", amendments)["location"] == \
+        "reduce_input_to_hidden:output['x']"
+
+    # A pin that disagrees with the report fails closed instead of guessing.
+    pins["M3GNet-MatPES-PBE-v2025.1-PES"]["capture_method"] = "documented_api"
+    with pytest.raises(RunnerValidationError, match="do not agree"):
+        pinned_capture(None, "M3GNet-MatPES-PBE-v2025.1-PES", amendments)
+
+
+def test_finished_model_phase_is_reused_and_verified_on_resume(tmp_path, monkeypatch):
+    """A stage that failed at a later model re-launches every model phase on resume; a
+    finished model's verified manifest is reused instead of recomputed under new code."""
+
+    import types
+
+    from e3sse.production import runners
+
+    module = types.ModuleType("synthetic_model_runner")
+    calls = []
+
+    def run_model(ctx):
+        calls.append(ctx.model)
+        return {"outputs": {"records": ctx.publish("records.json", {"model": ctx.model})}}
+
+    module.run_model = run_model
+    monkeypatch.setitem(sys.modules, "synthetic_model_runner", module)
+    monkeypatch.setitem(runners.RUNNER_MODULES, "development_ml_neb", "synthetic_model_runner")
+    sys.path.insert(0, str(REPOSITORY / "scripts"))
+    import run_production_stage
+
+    config = tmp_path / "production.json"
+    config.write_text("{}")
+    run_dir = tmp_path / "run"
+
+    def argv(model):
+        return ["--config", str(config), "--run-dir", str(run_dir), "--stage",
+                "development_ml_neb", "--phase", "model", "--model", model]
+
+    assert run_production_stage.main(argv("CHGNet-0.3.0")) == 0
+    assert calls == ["CHGNet-0.3.0"]
+
+    def stale(ctx):  # what a changed CODE_FILES hash would do to the finished shards
+        raise AssertionError("a finished model phase must not be recomputed")
+
+    module.run_model = stale
+    assert run_production_stage.main(argv("CHGNet-0.3.0")) == 0
+    assert calls == ["CHGNet-0.3.0"]
+
+    model_dir = run_dir / "development_ml_neb" / "models"
+    (model_dir / "CHGNet-0.3.0" / "records.json").write_text('{"model": "tampered"}')
+    assert run_production_stage.main(argv("CHGNet-0.3.0")) == 3  # fails closed
+
+    other = model_dir / "M3GNet-MP-2021.2.8-PES"
+    other.mkdir(parents=True)
+    (other / "model_manifest.json").write_text(json.dumps({
+        "schema_version": "e3sse.production.stage-manifest", "stage": "development_ml_neb",
+        "phase": "model", "model": "CHGNet-0.3.0", "outputs": {}}))
+    assert run_production_stage.main(argv("M3GNet-MP-2021.2.8-PES")) == 3

@@ -170,9 +170,13 @@ def pinned_capture(ctx: RunnerContext, model: str, amendments: dict[str, Any]) -
 
     if file_sha256(Path(pin["path"])) != pin["sha256"]:
         raise RunnerValidationError(f"{model}: pinned embedding report differs from its SHA-256")
-    report = load_json(Path(pin["path"]))
-    return {"capture_mode": report["capture_mode"], "location": report["location"],
-            "report_sha256": pin["sha256"]}
+    from e3sse.representation.embedding_capability import production_capture
+
+    try:
+        capture = production_capture(load_json(Path(pin["path"])), pin["capture_method"])
+    except ValueError as exc:
+        raise RunnerValidationError(f"{model}: pinned embedding report: {exc}") from exc
+    return {**capture, "report_sha256": pin["sha256"]}
 
 
 def frozen_ml_neb_identity(ctx: RunnerContext, model: str) -> dict[str, Any]:
